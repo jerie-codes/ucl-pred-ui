@@ -81,13 +81,13 @@ function App() {
     }
 
     loadForecast();
-    const poller = window.setInterval(loadForecast, 30000);
+    const poller = window.setInterval(loadForecast, hasLiveMatch ? 10000 : 30000);
 
     return () => {
       isActive = false;
       window.clearInterval(poller);
     };
-  }, [hasInitializedForm]);
+  }, [hasInitializedForm, hasLiveMatch]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -100,6 +100,7 @@ function App() {
 
   const teams = data.teams || [];
   const matches = data.matches || [];
+  const hasLiveMatch = matches.some((match) => isLiveStatus(match.status));
   const teamById = useMemo(() => Object.fromEntries(teams.map((team) => [team.id, team])), [teams]);
   const favorite = useMemo(() => teams.find((team) => team.name === data.model.favorite) || teams[0], [teams, data.model.favorite]);
   const selectedChampion = teams.find((team) => team.name === form.champion);
@@ -502,6 +503,7 @@ function MatchCard({ match, teamById, now }) {
   const hasScore = match.homeScore !== null && match.awayScore !== null;
   const isPastKickoff = now >= kickoffTime;
   const status = hasScore ? match.status : isPastKickoff ? "awaiting live update" : "upcoming";
+  const isLive = isLiveStatus(match.status);
   const [selectedOutcome, setSelectedOutcome] = useState("");
   const [voteCounts, setVoteCounts] = useState(() => readMatchVotes(match.id));
   const [showDetails, setShowDetails] = useState(false);
@@ -533,7 +535,7 @@ function MatchCard({ match, teamById, now }) {
     }
 
     loadDetail();
-    const poller = window.setInterval(loadDetail, 30000);
+    const poller = window.setInterval(loadDetail, isLiveStatus(matchDetail?.status || match.status) ? 10000 : 30000);
 
     return () => {
       isActive = false;
@@ -568,7 +570,9 @@ function MatchCard({ match, teamById, now }) {
       </div>
       <div className="match-footer">
         <span>{match.venue}</span>
-        <span className="status-pill">{status}</span>
+        <span className={`status-pill ${isLive ? "live" : ""}`}>
+          {isLive ? <><Activity size={14} /> Live</> : formatMatchStatus(status)}
+        </span>
       </div>
       <WinDrawWinPoll
         homeName={home?.name || match.homeTeam}
@@ -578,7 +582,7 @@ function MatchCard({ match, teamById, now }) {
         onVote={handleOutcomeVote}
       />
       {!hasScore && !isPastKickoff && <Countdown target={kickoffTime} now={now} />}
-      {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Live score polling is running; this card updates automatically when the backend receives a score.</p>}
+      {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Live score polling is running, and this card refreshes regularly while the match is live.</p>}
       <button className="button secondary compact details-toggle" type="button" onClick={() => setShowDetails((current) => !current)}>
         {showDetails ? <EyeOff size={16} /> : <Eye size={16} />}
         {showDetails ? "Hide match details" : "Show match details"}
@@ -1169,6 +1173,15 @@ function writeMatchVotes(matchId, votes) {
 function formatVotePercent(count, total) {
   if (!total) return 0;
   return Math.round((count / total) * 100);
+}
+
+function isLiveStatus(status) {
+  return ["in_play", "live", "paused"].includes(String(status || "").toLowerCase());
+}
+
+function formatMatchStatus(status) {
+  const value = String(status || "unknown").replaceAll("_", " ");
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function getDomesticLeagueLabel(teamId) {

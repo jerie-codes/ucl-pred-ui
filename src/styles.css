@@ -743,6 +743,7 @@ h2 {
   overflow: hidden;
   display: grid;
   gap: 18px;
+  align-content: start;
 }
 
 .stadium-photo {
@@ -831,6 +832,11 @@ h2 {
   text-align: center;
 }
 
+.team-score span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .team-score strong {
   font-size: 2.6rem;
   line-height: 1;
@@ -844,10 +850,30 @@ h2 {
 }
 
 .status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 5px 9px;
   border: 1px solid rgba(245, 196, 81, 0.4);
   border-radius: 999px;
   font-size: 0.72rem;
+}
+
+.status-pill.live {
+  color: #061034;
+  border-color: rgba(255, 93, 93, 0.75);
+  background: #ff5d5d;
+  box-shadow: 0 0 0 3px rgba(255, 93, 93, 0.18);
+}
+
+.status-pill.live svg {
+  animation: livePulse 1.2s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+  0%,
+  100% { opacity: 0.5; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.12); }
 }
 
 .leg-prediction {
@@ -2298,6 +2324,32 @@ textarea {
   .champion-card {
     min-height: auto;
   }
+
+  .match-meta,
+  .match-footer,
+  .vote-card-head,
+  .match-detail-top {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .status-pill {
+    white-space: nowrap;
+  }
+
+  .leader-row {
+    grid-template-columns: 30px minmax(0, 1fr) 62px;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .leader-value-meter {
+    width: 54px;
+  }
+
+  .selected-pick strong {
+    font-size: 1.3rem;
+  }
 }
 
 @media (max-width: 540px) {
@@ -2322,6 +2374,36 @@ textarea {
 
   h1 {
     font-size: 3.1rem;
+  }
+
+  .match-card,
+  .mvp-card,
+  .leader-list,
+  .team-card,
+  .prediction-form,
+  .vote-card,
+  .analysis-card,
+  .source-item {
+    padding: 16px;
+  }
+
+  .stadium-photo,
+  .team-photo {
+    margin-left: -16px;
+    margin-right: -16px;
+  }
+
+  .stadium-photo img,
+  .stadium-fallback {
+    height: 190px;
+  }
+
+  .stadium-label {
+    left: 12px;
+    right: 12px;
+    bottom: 10px;
+    max-width: none;
+    font-size: 0.78rem;
   }
 
   .stat-grid {
@@ -2374,6 +2456,82 @@ textarea {
 
   .score-divider {
     font-size: 0.78rem;
+  }
+
+  .score-row {
+    grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .team-score {
+    gap: 6px;
+  }
+
+  .team-score span {
+    font-size: 0.84rem;
+    line-height: 1.25;
+  }
+
+  .team-score strong {
+    font-size: 2rem;
+  }
+
+  .selected-pick {
+    grid-template-columns: 40px minmax(0, 1fr);
+    column-gap: 10px;
+    min-height: 68px;
+    padding: 10px;
+  }
+
+  .selected-pick img {
+    width: 40px;
+    height: 40px;
+  }
+
+  .selected-pick img.selected-logo-atleti {
+    width: 46px;
+    height: 46px;
+    margin-left: -2px;
+  }
+
+  .selected-pick strong {
+    font-size: 1.18rem;
+  }
+
+  .match-detail-panel,
+  .lineup-column,
+  .event-list,
+  .match-detail-stat {
+    padding: 10px;
+  }
+
+  .leader-row {
+    grid-template-columns: 28px minmax(0, 1fr) 54px;
+    min-height: 64px;
+    padding: 9px;
+  }
+
+  .leader-rank,
+  .lineup-shirt {
+    width: 28px;
+    height: 28px;
+    font-size: 0.72rem;
+  }
+
+  .leader-player strong {
+    font-size: 0.9rem;
+  }
+
+  .leader-player small {
+    font-size: 0.76rem;
+  }
+
+  .leader-row em {
+    font-size: 1.35rem;
+  }
+
+  .leader-value-meter {
+    width: 44px;
   }
 }
 
