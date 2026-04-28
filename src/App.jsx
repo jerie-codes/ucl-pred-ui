@@ -55,6 +55,9 @@ function App() {
   const [matchVotes, setMatchVotes] = useState({});
   const [sharedPredictions, setSharedPredictions] = useState({ count: 0, tally: {}, recent: [] });
   const [hasInitializedForm, setHasInitializedForm] = useState(false);
+  const teams = data.teams || [];
+  const matches = data.matches || [];
+  const hasLiveMatch = matches.some((match) => isLiveStatus(match.status));
 
   useEffect(() => {
     let isActive = true;
@@ -115,10 +118,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem(LOCAL_PREDICTIONS_KEY, JSON.stringify(localPredictions));
   }, [localPredictions]);
-
-  const teams = data.teams || [];
-  const matches = data.matches || [];
-  const hasLiveMatch = matches.some((match) => isLiveStatus(match.status));
   const teamById = useMemo(() => Object.fromEntries(teams.map((team) => [team.id, team])), [teams]);
   const favorite = useMemo(() => teams.find((team) => team.name === data.model.favorite) || teams[0], [teams, data.model.favorite]);
   const selectedChampion = teams.find((team) => team.name === form.champion);
@@ -1107,11 +1106,12 @@ function PredictionFeed({ predictions, teams, now }) {
       <div className="prediction-feed">
         {predictions.slice(0, 8).map((prediction) => {
           const team = teamLookup[prediction.champion];
+          const displayName = String(prediction.name || "Fan");
           return (
-            <div className="prediction-entry" key={prediction.id}>
-              <span className="feed-avatar">{prediction.name.slice(0, 2).toUpperCase()}</span>
+            <div className="prediction-entry" key={prediction.id || `${prediction.timestamp || "recent"}-${displayName}-${prediction.champion || "pick"}`}>
+              <span className="feed-avatar">{displayName.slice(0, 2).toUpperCase()}</span>
               <div>
-                <strong>{prediction.name}</strong>
+                <strong>{displayName}</strong>
                 <span>
                   {team && <img className={`feed-logo feed-logo-${team.id}`} src={team.logo} alt="" />}
                   {prediction.champion} • {prediction.confidence}% confident
