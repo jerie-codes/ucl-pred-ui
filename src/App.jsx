@@ -208,6 +208,59 @@ function App() {
           )}
         </section>
 
+        <section className="section leaders-section">
+          <div className="section-heading">
+            <p className="eyebrow">Leaders</p>
+            <h2>Top performers — goals, assists, MVP</h2>
+            <p>Season leaders among the remaining squads: top scorers, assist makers, and an MVP candidate.</p>
+          </div>
+          <div className="leaders-grid">
+            {data.leaders && (
+              <>
+                <article className="mvp-card">
+                  <div className="mvp-photo">
+                    <img src={data.leaders.mvp.photo} alt={data.leaders.mvp.name} />
+                  </div>
+                  <div>
+                    <h3>{data.leaders.mvp.name}</h3>
+                    <strong>{data.leaders.mvp.team}</strong>
+                    <p className="muted">{data.leaders.mvp.role}</p>
+                    <p>{data.leaders.mvp.value}</p>
+                    <p className="muted small">{data.leaders.mvp.note}</p>
+                  </div>
+                </article>
+
+                <article className="leader-list">
+                  <h4>Top scorers</h4>
+                  <ol>
+                    {data.leaders.topScorers.map((s) => (
+                      <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
+                    ))}
+                  </ol>
+                </article>
+
+                <article className="leader-list">
+                  <h4>Top assists</h4>
+                  <ol>
+                    {data.leaders.topAssists.map((s) => (
+                      <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
+                    ))}
+                  </ol>
+                </article>
+
+                <article className="leader-list">
+                  <h4>Goals + assists</h4>
+                  <ol>
+                    {data.leaders.topGoalAssists.map((s) => (
+                      <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
+                    ))}
+                  </ol>
+                </article>
+              </>
+            )}
+          </div>
+        </section>
+
         <section className="hero-stat-strip" aria-label="Competition status">
           <InfoTile label="Current stage   " value={data.model.stage} />
           <InfoTile label="Final venue   " value="Puskás Aréna, Budapest" />
