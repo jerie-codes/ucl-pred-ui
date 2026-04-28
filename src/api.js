@@ -9,6 +9,14 @@ export async function fetchForecast() {
   return response.json();
 }
 
+export async function fetchMatchDetail(matchId) {
+  const response = await fetch(`${API_BASE_URL}/matches/${matchId}/`);
+  if (!response.ok) {
+    throw new Error("Could not load live match details.");
+  }
+  return response.json();
+}
+
 export async function submitPrediction(payload) {
   const response = await fetch(`${API_BASE_URL}/predictions/`, {
     method: "POST",

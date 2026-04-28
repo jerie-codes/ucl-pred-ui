@@ -5,21 +5,21 @@ import {
   Clock3,
   Crown,
   Database,
+  Eye,
+  EyeOff,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   Trophy
 } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
-import { fetchForecast, submitPrediction } from "./api";
+import { fetchForecast, fetchMatchDetail, submitPrediction } from "./api";
 
 const FINAL_KICKOFF = "2026-05-30T18:00:00+02:00";
 const LOCAL_PREDICTIONS_KEY = "ucl-predictor-local-predictions-v2";
+const WDW_VOTES_STORAGE_KEY = "ucl-predictor-wdw-votes-v1";
 const FINAL_SIDE_A = new Set(["psg", "bayern"]);
 const FINAL_SIDE_B = new Set(["arsenal", "atleti"]);
-const UCL_LOGO_URL = "https://upload.wikimedia.org/wikipedia/en/6/6f/UEFA_Champions_League_logo.svg";
-const UCL_TROPHY_URL = "https://upload.wikimedia.org/wikipedia/en/8/8f/UEFA_Champions_League_Trophy_-_cropped.jpg";
-const UCL_ANTHEM_URL = "https://www.uefa.com/uefachampionsleague/news/022d-0e1636f1244a-c916aa410dad-1000--champions-league-anthem/";
 
 const fallbackData = {
   model: {
@@ -52,21 +52,42 @@ function App() {
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [localPredictions, setLocalPredictions] = useState(() => readLocalPredictions());
+  const [hasInitializedForm, setHasInitializedForm] = useState(false);
 
   useEffect(() => {
-    fetchForecast()
-      .then((forecast) => {
+    let isActive = true;
+
+    async function loadForecast() {
+      try {
+        const forecast = await fetchForecast();
+        if (!isActive) return;
+
         setData(forecast);
-        if (forecast.teams?.length) {
+        setLoadError("");
+
+        if (!hasInitializedForm && forecast.teams?.length) {
           setForm((current) => ({
             ...current,
             champion: forecast.model.favorite,
             runnerUp: forecast.model.runnerUp
           }));
+          setHasInitializedForm(true);
         }
-      })
-      .catch((error) => setLoadError(error.message));
-  }, []);
+      } catch (error) {
+        if (isActive) {
+          setLoadError(error.message);
+        }
+      }
+    }
+
+    loadForecast();
+    const poller = window.setInterval(loadForecast, 30000);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(poller);
+    };
+  }, [hasInitializedForm]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -167,10 +188,10 @@ function App() {
             <span>UCL Predictor</span>
           </a>
           <div className="nav-links">
-            <a href="#ucl">UCL</a>
-            <a href="#pick">Pick</a>
+            <a href="#predict">Pick</a>
             <a href="#live">Live</a>
             <a href="#model">Model</a>
+            <a href="#leaders">Leaders</a>
             <a href="#teams">Teams</a>
             <a href="#predict">Predict</a>
           </div>
@@ -194,7 +215,7 @@ function App() {
             </p>
             <FinalCountdown parts={finalCountdown} />
             <div className="hero-actions">
-              <a className="button primary" href="#pick"><Trophy size={18} /> Pick your champion</a>
+              <a className="button primary" href="#predict"><Trophy size={18} /> Make your call</a>
               <a className="button secondary" href="#live"><Clock3 size={18} /> Match centre</a>
             </div>
           </div>
@@ -208,6 +229,7 @@ function App() {
           )}
         </section>
 
+        {false && (
         <section className="section leaders-section">
           <div className="section-heading">
             <p className="eyebrow">Leaders</p>
@@ -218,48 +240,57 @@ function App() {
             {data.leaders && (
               <>
                 <article className="mvp-card">
+                  <span className="leader-kicker">Most valuable player</span>
                   <div className="mvp-photo">
                     <img src={data.leaders.mvp.photo} alt={data.leaders.mvp.name} />
                   </div>
-                  <div>
-                    <h3>{data.leaders.mvp.name}</h3>
-                    <strong>{data.leaders.mvp.team}</strong>
-                    <p className="muted">{data.leaders.mvp.role}</p>
-                    <p>{data.leaders.mvp.value}</p>
-                    <p className="muted small">{data.leaders.mvp.note}</p>
+                  <h3>{data.leaders.mvp.name}</h3>
+                  <strong>{data.leaders.mvp.team}</strong>
+                  <p className="muted">{data.leaders.mvp.role}</p>
+                  <p>{data.leaders.mvp.value}</p>
+                  <p className="muted small">{data.leaders.mvp.note}</p>
+                </article>
+
+                <article className="leader-list">
+                  <div className="leader-list-head">
+                    <h3>Top scorers</h3>
+                    <span>Goals</span>
+                  </div>
+                  <div className="leader-rows">
+                    {data.leaders.topScorers.map((s) => (
+                      <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
+                    ))}
                   </div>
                 </article>
 
                 <article className="leader-list">
-                  <h4>Top scorers</h4>
-                  <ol>
-                    {data.leaders.topScorers.map((s) => (
-                      <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
-                    ))}
-                  </ol>
-                </article>
-
-                <article className="leader-list">
-                  <h4>Top assists</h4>
-                  <ol>
+                  <div className="leader-list-head">
+                    <h3>Top assists</h3>
+                    <span>Assists</span>
+                  </div>
+                  <div className="leader-rows">
                     {data.leaders.topAssists.map((s) => (
                       <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
                     ))}
-                  </ol>
+                  </div>
                 </article>
 
                 <article className="leader-list">
-                  <h4>Goals + assists</h4>
-                  <ol>
+                  <div className="leader-list-head">
+                    <h3>Goals + assists</h3>
+                    <span>Goal involvements</span>
+                  </div>
+                  <div className="leader-rows">
                     {data.leaders.topGoalAssists.map((s) => (
                       <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
                     ))}
-                  </ol>
+                  </div>
                 </article>
               </>
             )}
           </div>
         </section>
+        )}
 
         <section className="hero-stat-strip" aria-label="Competition status">
           <InfoTile label="Current stage   " value={data.model.stage} />
@@ -269,17 +300,6 @@ function App() {
         </section>
 
         {loadError && <p className="notice">Backend data could not load: {loadError}</p>}
-
-        <UclIdentitySection />
-
-        <section id="pick" className="section pick-section">
-          <div className="section-heading centered">
-            <p className="eyebrow">Pick your champion</p>
-            <h2>Choose who survives the semi-finals</h2>
-            <p>Select a club here and it fills your prediction form below. The cards use the model data, team stats, and crest assets from the app.</p>
-          </div>
-          <ChampionSelector teams={teams} selected={form.champion} onSelect={selectChampion} />
-        </section>
 
         <section id="live" className="section">
           <div className="section-heading">
@@ -322,6 +342,8 @@ function App() {
           </div>
         </section>
 
+        <LeadersSection leaders={data.leaders} />
+
         <section id="teams" className="section">
           <div className="section-heading">
             <p className="eyebrow">Remaining teams</p>
@@ -335,28 +357,16 @@ function App() {
         <section id="predict" className="section prediction-section">
           <div className="section-heading">
             <p className="eyebrow">Your call</p>
-            <h2>Submit your champion prediction</h2>
-            <p>Your prediction is posted to Django when Sheets is configured. It is also shown immediately in this browser's live fan board.</p>
+            <h2>Make your call</h2>
+            <p>Pick your champion, set a final opponent, and send your prediction. Your vote is posted to Django when Sheets is configured and also appears immediately in this browser.</p>
           </div>
+          <ChampionSelector teams={teams} selected={form.champion} onSelect={selectChampion} />
           <div className="prediction-layout single">
             <form className="prediction-form" onSubmit={handleSubmit}>
               <div className="selected-pick">
                 {selectedChampion && <img className={`selected-logo selected-logo-${selectedChampion.id}`} src={selectedChampion.logo} alt={`${selectedChampion.name} logo`} />}
                 <span>Selected champion</span>
                 <strong>{form.champion || "Choose a team"}</strong>
-              </div>
-              <div className="mini-picker" aria-label="Champion quick picker">
-                {teams.map((team) => (
-                  <button
-                    className={`mini-pick ${form.champion === team.name ? "active" : ""}`}
-                    type="button"
-                    onClick={() => selectChampion(team)}
-                    key={team.id}
-                  >
-                    <img className={`mini-logo mini-logo-${team.id}`} src={team.logo} alt="" />
-                    <span>{team.name}</span>
-                  </button>
-                ))}
               </div>
               <label>
                 Name
@@ -442,37 +452,6 @@ function ChampionSelector({ teams, selected, onSelect }) {
   );
 }
 
-function UclIdentitySection() {
-  return (
-    <section id="ucl" className="section ucl-identity-section">
-      <div className="ucl-identity-card">
-        <div className="ucl-brand-panel">
-          <img src={UCL_LOGO_URL} alt="UEFA Champions League logo" className="ucl-logo" loading="lazy" />
-          <div>
-            <p className="eyebrow">Champions League theme</p>
-            <h2>European nights under the lights</h2>
-            <p>
-              Starball branding, the trophy, and the anthem mood bring the page closer to a true Champions League
-              match-night experience while keeping the project clearly fan-made.
-            </p>
-          </div>
-        </div>
-        <div className="ucl-trophy-panel">
-          <img src={UCL_TROPHY_URL} alt="UEFA Champions League trophy" className="ucl-trophy" loading="lazy" />
-          <div className="anthem-card">
-            <span className="anthem-kicker">Anthem</span>
-            <strong>Champions League</strong>
-            <p>Official UEFA background on Tony Britten's anthem. Audio is linked, not downloaded or bundled.</p>
-            <a className="button secondary compact" href={UCL_ANTHEM_URL} target="_blank" rel="noreferrer">
-              Open anthem story
-            </a>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function ChampionPickCard({ team, selected, onSelect }) {
   return (
     <button className={`champion-card ${selected ? "selected" : ""}`} type="button" onClick={onSelect}>
@@ -523,6 +502,57 @@ function MatchCard({ match, teamById, now }) {
   const hasScore = match.homeScore !== null && match.awayScore !== null;
   const isPastKickoff = now >= kickoffTime;
   const status = hasScore ? match.status : isPastKickoff ? "awaiting live update" : "upcoming";
+  const [selectedOutcome, setSelectedOutcome] = useState("");
+  const [voteCounts, setVoteCounts] = useState(() => readMatchVotes(match.id));
+  const [showDetails, setShowDetails] = useState(false);
+  const [matchDetail, setMatchDetail] = useState(null);
+  const [detailError, setDetailError] = useState("");
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showDetails) return undefined;
+
+    let isActive = true;
+
+    async function loadDetail() {
+      try {
+        setIsDetailLoading(true);
+        const detail = await fetchMatchDetail(match.id);
+        if (!isActive) return;
+        setMatchDetail(detail);
+        setDetailError("");
+      } catch (error) {
+        if (isActive) {
+          setDetailError(error.message);
+        }
+      } finally {
+        if (isActive) {
+          setIsDetailLoading(false);
+        }
+      }
+    }
+
+    loadDetail();
+    const poller = window.setInterval(loadDetail, 30000);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(poller);
+    };
+  }, [showDetails, match.id]);
+
+  function handleOutcomeVote(outcome) {
+    if (selectedOutcome) return;
+
+    const nextCounts = {
+      ...voteCounts,
+      [outcome]: voteCounts[outcome] + 1
+    };
+
+    setSelectedOutcome(outcome);
+    setVoteCounts(nextCounts);
+    writeMatchVotes(match.id, nextCounts);
+  }
 
   return (
     <article className="match-card">
@@ -540,8 +570,28 @@ function MatchCard({ match, teamById, now }) {
         <span>{match.venue}</span>
         <span className="status-pill">{status}</span>
       </div>
+      <WinDrawWinPoll
+        homeName={home?.name || match.homeTeam}
+        awayName={away?.name || match.awayTeam}
+        selectedOutcome={selectedOutcome}
+        voteCounts={voteCounts}
+        onVote={handleOutcomeVote}
+      />
       {!hasScore && !isPastKickoff && <Countdown target={kickoffTime} now={now} />}
-      {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Add a live-score API or update backend score fields to publish live numbers.</p>}
+      {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Live score polling is running; this card updates automatically when the backend receives a score.</p>}
+      <button className="button secondary compact details-toggle" type="button" onClick={() => setShowDetails((current) => !current)}>
+        {showDetails ? <EyeOff size={16} /> : <Eye size={16} />}
+        {showDetails ? "Hide match details" : "Show match details"}
+      </button>
+      {showDetails && (
+        <MatchDetailPanel
+          detail={matchDetail}
+          isLoading={isDetailLoading}
+          error={detailError}
+          homeName={home?.name || match.homeTeam}
+          awayName={away?.name || match.awayTeam}
+        />
+      )}
       <a className="button secondary compact" href={match.liveUrl} target="_blank" rel="noreferrer">
         <Activity size={16} /> UEFA live centre
       </a>
@@ -626,6 +676,218 @@ function AnalysisCard({ icon, title, text }) {
   );
 }
 
+function LeadersSection({ leaders }) {
+  if (!leaders) return null;
+
+  return (
+    <section id="leaders" className="section leaders-section">
+      <div className="section-heading">
+        <p className="eyebrow">Leaders</p>
+        <h2>Top performers â€” goals, assists, MVP</h2>
+        <p>Season leaders among the remaining squads: top scorers, assist makers, and an MVP candidate.</p>
+      </div>
+      <div className="leaders-grid">
+        <article className="mvp-card">
+          <span className="leader-kicker">Most valuable player</span>
+          <div className="mvp-photo">
+            <img src={leaders.mvp.photo} alt={leaders.mvp.name} />
+          </div>
+          <h3>{leaders.mvp.name}</h3>
+          <strong>{leaders.mvp.team}</strong>
+          <p className="muted">{leaders.mvp.role}</p>
+          <p>{leaders.mvp.value}</p>
+          <p className="muted small">{leaders.mvp.note}</p>
+        </article>
+
+        <LeaderList title="Top scorers" label="Goals" items={leaders.topScorers} />
+        <LeaderList title="Top assists" label="Assists" items={leaders.topAssists} />
+        <LeaderList title="Goals + assists" label="Goal involvements" items={leaders.topGoalAssists} />
+      </div>
+    </section>
+  );
+}
+
+function LeaderList({ title, label, items }) {
+  const maxValue = Math.max(...items.map((item) => Number(item.value) || 0), 1);
+
+  return (
+    <article className="leader-list">
+      <div className="leader-list-head">
+        <h3>{title}</h3>
+        <span>{label}</span>
+      </div>
+      <div className="leader-rows">
+        {items.map((item) => (
+          <LeaderRow
+            key={`${title}-${item.rank}-${item.name}`}
+            rank={item.rank}
+            name={item.name}
+            team={item.team}
+            value={item.value}
+            fill={Math.max((Number(item.value) || 0) / maxValue, 0.12)}
+          />
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function LeaderRow({ rank, name, team, value, fill }) {
+  return (
+    <div className="leader-row">
+      <span className="leader-rank">{rank}</span>
+      <span className="leader-player">
+        <strong>{name}</strong>
+        <small>{team}</small>
+      </span>
+      <span className="leader-value-block">
+        <em>{value}</em>
+        <span className="leader-value-meter"><span style={{ width: `${Math.round(fill * 100)}%` }} /></span>
+      </span>
+    </div>
+  );
+}
+
+function WinDrawWinPoll({ homeName, awayName, selectedOutcome, voteCounts, onVote }) {
+  const totalVotes = voteCounts.home + voteCounts.draw + voteCounts.away;
+  const options = [
+    { key: "home", label: `${homeName} win`, count: voteCounts.home },
+    { key: "draw", label: "Draw", count: voteCounts.draw },
+    { key: "away", label: `${awayName} win`, count: voteCounts.away }
+  ];
+
+  return (
+    <div className="score-predictor">
+      <div className="score-predictor-head">
+        <span>Win-draw-win</span>
+        <strong>{totalVotes ? `${totalVotes} saved vote${totalVotes === 1 ? "" : "s"}` : "One vote per refresh"}</strong>
+      </div>
+      <div className="wdw-row" aria-label="Match outcome vote">
+        {options.map((option) => (
+          <button
+            key={option.key}
+            className={`wdw-chip ${selectedOutcome ? "" : "clickable"} ${selectedOutcome === option.key ? "active" : ""}`}
+            type="button"
+            onClick={() => onVote(option.key)}
+            disabled={Boolean(selectedOutcome)}
+          >
+            <span>{option.label}</span>
+            <strong>{formatVotePercent(option.count, totalVotes)}%</strong>
+          </button>
+        ))}
+      </div>
+      <div className="vote-count-row">
+        <span>Home votes<strong>{voteCounts.home}</strong></span>
+        <span>Draw votes<strong>{voteCounts.draw}</strong></span>
+        <span>Away votes<strong>{voteCounts.away}</strong></span>
+      </div>
+      <div className="user-wdw">
+        <span>Your pick</span>
+        <strong>{selectedOutcome ? options.find((option) => option.key === selectedOutcome)?.label : "Choose one outcome"}</strong>
+      </div>
+    </div>
+  );
+}
+
+function MatchDetailPanel({ detail, isLoading, error, homeName, awayName }) {
+  if (isLoading && !detail) {
+    return <div className="match-detail-panel"><p className="live-note">Loading live match details...</p></div>;
+  }
+
+  if (error && !detail) {
+    return <div className="match-detail-panel"><p className="live-note">{error}</p></div>;
+  }
+
+  if (!detail) return null;
+
+  const scoreHome = detail.score?.home ?? 0;
+  const scoreAway = detail.score?.away ?? 0;
+
+  return (
+    <div className="match-detail-panel">
+      <div className="match-detail-top">
+        <div>
+          <span className="detail-kicker">Live match center</span>
+          <h3>{homeName} {scoreHome} - {scoreAway} {awayName}</h3>
+          <p>{detail.summary}</p>
+        </div>
+        <span className="status-pill">{detail.status}</span>
+      </div>
+
+      {detail.stats?.length > 0 && (
+        <div className="match-detail-stats">
+          {detail.stats.map((stat) => (
+            <div className="match-detail-stat" key={stat.label}>
+              <span>{stat.label}</span>
+              <strong>{stat.value}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="match-detail-grid">
+        <LineupColumn title={`${homeName} lineup`} players={detail.lineups?.home || []} />
+        <LineupColumn title={`${awayName} lineup`} players={detail.lineups?.away || []} />
+      </div>
+
+      <div className="match-detail-grid events">
+        <EventList
+          title="Goals"
+          emptyText="No goals recorded yet."
+          items={detail.events?.goals || []}
+          renderItem={(item) => `${item.minute} ${item.scorer} (${item.team})${item.score ? ` - ${item.score}` : ""}`}
+        />
+        <EventList
+          title="Bookings"
+          emptyText="No cards recorded yet."
+          items={detail.events?.bookings || []}
+          renderItem={(item) => `${item.minute} ${item.player} (${item.team}) - ${item.card}`}
+        />
+        <EventList
+          title="Substitutions"
+          emptyText="No substitutions recorded yet."
+          items={detail.events?.substitutions || []}
+          renderItem={(item) => `${item.minute} ${item.team}: ${item.playerOut} off, ${item.playerIn} on`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function LineupColumn({ title, players }) {
+  return (
+    <div className="lineup-column">
+      <h4>{title}</h4>
+      {!players.length && <p className="muted">Lineup not published yet.</p>}
+      <ol>
+        {players.map((player) => (
+          <li key={`${title}-${player.shirtNumber || "x"}-${player.name}`}>
+            <span className="lineup-shirt">{player.shirtNumber ?? "-"}</span>
+            <span>
+              <strong>{player.name}</strong>
+              <small>{player.position}</small>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function EventList({ title, items, emptyText, renderItem }) {
+  return (
+    <div className="event-list">
+      <h4>{title}</h4>
+      {!items.length && <p className="muted">{emptyText}</p>}
+      <ul>
+        {items.map((item, index) => (
+          <li key={`${title}-${index}-${renderItem(item)}`}>{renderItem(item)}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function TeamCard({ team }) {
   return (
     <article className="team-card detailed">
@@ -646,7 +908,7 @@ function TeamCard({ team }) {
         <Stat label="Recoveries" value={team.stats.recoveries} />
       </div>
       {team.manager && <ManagerPanel manager={team.manager} />}
-      {team.recentForm && <RecentForm form={team.recentForm} />}
+      {team.recentForm && <RecentForm form={team.recentForm} leagueLabel={team.recentForm.leagueLabel || getDomesticLeagueLabel(team.id)} />}
       <p>{team.note}</p>
       <div className="watch-list">
         <h4>Players to watch</h4>
@@ -698,11 +960,11 @@ function ManagerPanel({ manager }) {
   );
 }
 
-function RecentForm({ form }) {
+function RecentForm({ form, leagueLabel }) {
   return (
     <div className="recent-form-grid">
       <FormColumn title="Champions League last 5" items={form.championsLeague} />
-      <FormColumn title="League last 5" items={form.league} />
+      <FormColumn title={`${leagueLabel} last 5`} items={form.league} />
     </div>
   );
 }
@@ -883,6 +1145,38 @@ function readLocalPredictions() {
   } catch {
     return [];
   }
+}
+
+function readMatchVotes(matchId) {
+  try {
+    const allVotes = JSON.parse(localStorage.getItem(WDW_VOTES_STORAGE_KEY) || "{}");
+    return allVotes[matchId] || { home: 0, draw: 0, away: 0 };
+  } catch {
+    return { home: 0, draw: 0, away: 0 };
+  }
+}
+
+function writeMatchVotes(matchId, votes) {
+  try {
+    const allVotes = JSON.parse(localStorage.getItem(WDW_VOTES_STORAGE_KEY) || "{}");
+    allVotes[matchId] = votes;
+    localStorage.setItem(WDW_VOTES_STORAGE_KEY, JSON.stringify(allVotes));
+  } catch {
+    // Ignore storage failures and keep the in-memory vote state.
+  }
+}
+
+function formatVotePercent(count, total) {
+  if (!total) return 0;
+  return Math.round((count / total) * 100);
+}
+
+function getDomesticLeagueLabel(teamId) {
+  if (teamId === "bayern") return "Bundesliga";
+  if (teamId === "arsenal") return "Premier League";
+  if (teamId === "atleti") return "LaLiga";
+  if (teamId === "psg") return "Ligue 1";
+  return "League";
 }
 
 export default App;
