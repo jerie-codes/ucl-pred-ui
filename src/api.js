@@ -17,6 +17,14 @@ export async function fetchMatchDetail(matchId) {
   return response.json();
 }
 
+export async function fetchMatchVotes() {
+  const response = await fetch(`${API_BASE_URL}/match-votes/`);
+  if (!response.ok) {
+    throw new Error("Could not load match votes.");
+  }
+  return response.json();
+}
+
 export async function submitPrediction(payload) {
   const response = await fetch(`${API_BASE_URL}/predictions/`, {
     method: "POST",
@@ -28,6 +36,29 @@ export async function submitPrediction(payload) {
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error || "Could not save prediction.");
+  }
+  return data;
+}
+
+export async function fetchPredictions() {
+  const response = await fetch(`${API_BASE_URL}/predictions/`);
+  if (!response.ok) {
+    throw new Error("Could not load predictions.");
+  }
+  return response.json();
+}
+
+export async function submitMatchVote(payload) {
+  const response = await fetch(`${API_BASE_URL}/match-votes/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Could not save match vote.");
   }
   return data;
 }

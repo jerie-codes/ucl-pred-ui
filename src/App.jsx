@@ -13,11 +13,11 @@ import {
   Trophy
 } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
-import { fetchForecast, fetchMatchDetail, submitPrediction } from "./api";
+import { fetchForecast, fetchMatchDetail, fetchMatchVotes, fetchPredictions, submitMatchVote, submitPrediction } from "./api";
 
 const FINAL_KICKOFF = "2026-05-30T18:00:00+02:00";
 const LOCAL_PREDICTIONS_KEY = "ucl-predictor-local-predictions-v2";
-const WDW_VOTES_STORAGE_KEY = "ucl-predictor-wdw-votes-v1";
+const EMPTY_VOTE_COUNTS = { home: 0, draw: 0, away: 0 };
 const FINAL_SIDE_A = new Set(["psg", "bayern"]);
 const FINAL_SIDE_B = new Set(["arsenal", "atleti"]);
 
@@ -52,6 +52,8 @@ function App() {
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [localPredictions, setLocalPredictions] = useState(() => readLocalPredictions());
+  const [matchVotes, setMatchVotes] = useState({});
+  const [sharedPredictions, setSharedPredictions] = useState({ count: 0, tally: {}, recent: [] });
   const [hasInitializedForm, setHasInitializedForm] = useState(false);
 
   useEffect(() => {
@@ -73,6 +75,22 @@ function App() {
           }));
           setHasInitializedForm(true);
         }
+
+        try {
+          const voteData = await fetchMatchVotes();
+          if (!isActive) return;
+          setMatchVotes(voteData.voteCounts || {});
+        } catch {}
+
+        try {
+          const predictionData = await fetchPredictions();
+          if (!isActive) return;
+          setSharedPredictions({
+            count: predictionData.count || 0,
+            tally: predictionData.tally || {},
+            recent: predictionData.recent || []
+          });
+        } catch {}
       } catch (error) {
         if (isActive) {
           setLoadError(error.message);
@@ -106,17 +124,14 @@ function App() {
   const selectedChampion = teams.find((team) => team.name === form.champion);
   const runnerUpOptions = useMemo(() => getFinalOpponentOptions(form.champion, teams), [form.champion, teams]);
   const finalCountdown = getCountdownParts(new Date(FINAL_KICKOFF).getTime(), now);
-  const fanVoteCount = (data.predictionCount || 0) + localPredictions.length;
+  const fanVoteCount = sharedPredictions.count || data.predictionCount || localPredictions.length;
 
   const voteTally = useMemo(() => {
-    const counts = Object.fromEntries(teams.map((team) => [team.name, 0]));
-    localPredictions.forEach((prediction) => {
-      if (counts[prediction.champion] !== undefined) counts[prediction.champion] += 1;
-    });
+    const counts = Object.fromEntries(teams.map((team) => [team.name, sharedPredictions.tally[team.name] || 0]));
     return teams
       .map((team) => ({ team, count: counts[team.name] || 0 }))
       .sort((a, b) => b.count - a.count || b.team.probability - a.team.probability);
-  }, [teams, localPredictions]);
+  }, [teams, sharedPredictions]);
 
   function updateField(event) {
     const { name, value } = event.target;
@@ -165,10 +180,15 @@ function App() {
     try {
       const response = await submitPrediction(form);
       setStatus(response.message || "Prediction saved.");
+      setSharedPredictions({
+        count: response.count || 0,
+        tally: response.tally || {},
+        recent: response.recent || []
+      });
     } catch (error) {
       setStatus(`Saved locally. Backend note: ${error.message}`);
-    } finally {
       setLocalPredictions((current) => [entry, ...current].slice(0, 40));
+    } finally {
       setForm({
         name: "",
         champion: data.model.favorite,
@@ -178,6 +198,15 @@ function App() {
       });
       setIsSaving(false);
     }
+  }
+
+  async function handleMatchVote(matchId, outcome) {
+    const response = await submitMatchVote({ matchId, outcome });
+    setMatchVotes((current) => ({
+      ...current,
+      [matchId]: response.voteCounts || EMPTY_VOTE_COUNTS
+    }));
+    return response.voteCounts || EMPTY_VOTE_COUNTS;
   }
 
   return (
@@ -310,7 +339,14 @@ function App() {
           </div>
           <div className="match-grid">
             {matches.map((match) => (
-              <MatchCard match={match} teamById={teamById} now={now} key={match.id} />
+              <MatchCard
+                match={match}
+                teamById={teamById}
+                now={now}
+                voteCounts={matchVotes[match.id] || EMPTY_VOTE_COUNTS}
+                onVote={handleMatchVote}
+                key={match.id}
+              />
             ))}
           </div>
         </section>
@@ -396,8 +432,8 @@ function App() {
             </form>
           </div>
           <div className="fan-board">
-            <VoteTally tally={voteTally} total={localPredictions.length} />
-            <PredictionFeed predictions={localPredictions} teams={teams} now={now} />
+            <VoteTally tally={voteTally} total={fanVoteCount} />
+            <PredictionFeed predictions={sharedPredictions.recent.length ? sharedPredictions.recent : localPredictions} teams={teams} now={now} />
           </div>
         </section>
 
@@ -496,7 +532,7 @@ function InfoTile({ label, value }) {
   );
 }
 
-function MatchCard({ match, teamById, now }) {
+function MatchCard({ match, teamById, now, voteCounts, onVote }) {
   const home = teamById[match.homeTeamId];
   const away = teamById[match.awayTeamId];
   const kickoffTime = new Date(match.kickoff).getTime();
@@ -505,11 +541,12 @@ function MatchCard({ match, teamById, now }) {
   const status = hasScore ? match.status : isPastKickoff ? "awaiting live update" : "upcoming";
   const isLive = isLiveStatus(match.status);
   const [selectedOutcome, setSelectedOutcome] = useState("");
-  const [voteCounts, setVoteCounts] = useState(() => readMatchVotes(match.id));
   const [showDetails, setShowDetails] = useState(false);
   const [matchDetail, setMatchDetail] = useState(null);
   const [detailError, setDetailError] = useState("");
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [isVoteSaving, setIsVoteSaving] = useState(false);
+  const [voteError, setVoteError] = useState("");
 
   useEffect(() => {
     if (!showDetails) return undefined;
@@ -543,17 +580,19 @@ function MatchCard({ match, teamById, now }) {
     };
   }, [showDetails, match.id]);
 
-  function handleOutcomeVote(outcome) {
-    if (selectedOutcome) return;
+  async function handleOutcomeVote(outcome) {
+    if (selectedOutcome || isVoteSaving) return;
 
-    const nextCounts = {
-      ...voteCounts,
-      [outcome]: voteCounts[outcome] + 1
-    };
-
-    setSelectedOutcome(outcome);
-    setVoteCounts(nextCounts);
-    writeMatchVotes(match.id, nextCounts);
+    setIsVoteSaving(true);
+    setVoteError("");
+    try {
+      await onVote(match.id, outcome);
+      setSelectedOutcome(outcome);
+    } catch (error) {
+      setVoteError(error.message || "Could not save your vote.");
+    } finally {
+      setIsVoteSaving(false);
+    }
   }
 
   return (
@@ -580,7 +619,9 @@ function MatchCard({ match, teamById, now }) {
         selectedOutcome={selectedOutcome}
         voteCounts={voteCounts}
         onVote={handleOutcomeVote}
+        isVoteSaving={isVoteSaving}
       />
+      {voteError && <p className="live-note">{voteError}</p>}
       {!hasScore && !isPastKickoff && <Countdown target={kickoffTime} now={now} />}
       {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Live score polling is running, and this card refreshes regularly while the match is live.</p>}
       <button className="button secondary compact details-toggle" type="button" onClick={() => setShowDetails((current) => !current)}>
@@ -752,7 +793,7 @@ function LeaderRow({ rank, name, team, value, fill }) {
   );
 }
 
-function WinDrawWinPoll({ homeName, awayName, selectedOutcome, voteCounts, onVote }) {
+function WinDrawWinPoll({ homeName, awayName, selectedOutcome, voteCounts, onVote, isVoteSaving }) {
   const totalVotes = voteCounts.home + voteCounts.draw + voteCounts.away;
   const options = [
     { key: "home", label: `${homeName} win`, count: voteCounts.home },
@@ -764,7 +805,13 @@ function WinDrawWinPoll({ homeName, awayName, selectedOutcome, voteCounts, onVot
     <div className="score-predictor">
       <div className="score-predictor-head">
         <span>Win-draw-win</span>
-        <strong>{totalVotes ? `${totalVotes} saved vote${totalVotes === 1 ? "" : "s"}` : "One vote per refresh"}</strong>
+        <strong>
+          {isVoteSaving
+            ? "Saving vote..."
+            : totalVotes
+              ? `${totalVotes} saved vote${totalVotes === 1 ? "" : "s"}`
+              : "One vote per refresh"}
+        </strong>
       </div>
       <div className="wdw-row" aria-label="Match outcome vote">
         {options.map((option) => (
@@ -773,7 +820,7 @@ function WinDrawWinPoll({ homeName, awayName, selectedOutcome, voteCounts, onVot
             className={`wdw-chip ${selectedOutcome ? "" : "clickable"} ${selectedOutcome === option.key ? "active" : ""}`}
             type="button"
             onClick={() => onVote(option.key)}
-            disabled={Boolean(selectedOutcome)}
+            disabled={Boolean(selectedOutcome || isVoteSaving)}
           >
             <span>{option.label}</span>
             <strong>{formatVotePercent(option.count, totalVotes)}%</strong>
@@ -1112,7 +1159,9 @@ function formatKickoff(value) {
 }
 
 function formatRelativeTime(timestamp, now) {
-  const seconds = Math.floor((now - timestamp) / 1000);
+  const timeValue = typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
+  if (!timeValue || Number.isNaN(timeValue)) return "Recently";
+  const seconds = Math.floor((now - timeValue) / 1000);
   if (seconds < 60) return "Just now";
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
@@ -1148,25 +1197,6 @@ function readLocalPredictions() {
     return JSON.parse(localStorage.getItem(LOCAL_PREDICTIONS_KEY) || "[]");
   } catch {
     return [];
-  }
-}
-
-function readMatchVotes(matchId) {
-  try {
-    const allVotes = JSON.parse(localStorage.getItem(WDW_VOTES_STORAGE_KEY) || "{}");
-    return allVotes[matchId] || { home: 0, draw: 0, away: 0 };
-  } catch {
-    return { home: 0, draw: 0, away: 0 };
-  }
-}
-
-function writeMatchVotes(matchId, votes) {
-  try {
-    const allVotes = JSON.parse(localStorage.getItem(WDW_VOTES_STORAGE_KEY) || "{}");
-    allVotes[matchId] = votes;
-    localStorage.setItem(WDW_VOTES_STORAGE_KEY, JSON.stringify(allVotes));
-  } catch {
-    // Ignore storage failures and keep the in-memory vote state.
   }
 }
 
