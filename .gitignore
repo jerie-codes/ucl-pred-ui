@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+db.sqlite3
+
+# Django and secrets
+backend/.env
+*.sqlite3
+
+# Node and React
+node_modules/
+frontend/dist/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.vscode/
