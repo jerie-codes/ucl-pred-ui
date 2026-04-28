@@ -54,6 +54,8 @@ function App() {
   const [localPredictions, setLocalPredictions] = useState(() => readLocalPredictions());
   const [matchVotes, setMatchVotes] = useState({});
   const [sharedPredictions, setSharedPredictions] = useState({ count: 0, tally: {}, recent: [] });
+  const [voteLoadError, setVoteLoadError] = useState("");
+  const [predictionLoadError, setPredictionLoadError] = useState("");
   const [hasInitializedForm, setHasInitializedForm] = useState(false);
   const teams = data.teams || [];
   const matches = data.matches || [];
@@ -78,22 +80,6 @@ function App() {
           }));
           setHasInitializedForm(true);
         }
-
-        try {
-          const voteData = await fetchMatchVotes();
-          if (!isActive) return;
-          setMatchVotes(voteData.voteCounts || {});
-        } catch {}
-
-        try {
-          const predictionData = await fetchPredictions();
-          if (!isActive) return;
-          setSharedPredictions({
-            count: predictionData.count || 0,
-            tally: predictionData.tally || {},
-            recent: predictionData.recent || []
-          });
-        } catch {}
       } catch (error) {
         if (isActive) {
           setLoadError(error.message);
@@ -109,6 +95,46 @@ function App() {
       window.clearInterval(poller);
     };
   }, [hasInitializedForm, hasLiveMatch]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadCommunityData() {
+      try {
+        const voteData = await fetchMatchVotes();
+        if (!isActive) return;
+        setMatchVotes(voteData.voteCounts || {});
+        setVoteLoadError("");
+      } catch (error) {
+        if (isActive) {
+          setVoteLoadError(error.message);
+        }
+      }
+
+      try {
+        const predictionData = await fetchPredictions();
+        if (!isActive) return;
+        setSharedPredictions({
+          count: predictionData.count || 0,
+          tally: predictionData.tally || {},
+          recent: predictionData.recent || []
+        });
+        setPredictionLoadError("");
+      } catch (error) {
+        if (isActive) {
+          setPredictionLoadError(error.message);
+        }
+      }
+    }
+
+    loadCommunityData();
+    const poller = window.setInterval(loadCommunityData, 30000);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(poller);
+    };
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -179,11 +205,8 @@ function App() {
     try {
       const response = await submitPrediction(form);
       setStatus(response.message || "Prediction saved.");
-      setSharedPredictions({
-        count: response.count || 0,
-        tally: response.tally || {},
-        recent: response.recent || []
-      });
+      setSharedPredictions((current) => mergePredictionBoard(response, entry, current));
+      setLocalPredictions((current) => [entry, ...current].slice(0, 40));
     } catch (error) {
       setStatus(`Saved locally. Backend note: ${error.message}`);
       setLocalPredictions((current) => [entry, ...current].slice(0, 40));
@@ -328,7 +351,16 @@ function App() {
           <InfoTile label="Fan votes   " value={fanVoteCount} />
         </section>
 
-        {loadError && <p className="notice">Backend data could not load: {loadError}</p>}
+        {(loadError || data.liveScoreStatus?.startsWith("unavailable") || data.liveScoreStatus === "not_configured" || data.sheetsStatus?.startsWith("sheet_unavailable") || voteLoadError || predictionLoadError) && (
+          <div className="notice-stack">
+            {loadError && <p className="notice">Backend data could not load: {loadError}</p>}
+            {data.liveScoreStatus === "not_configured" && <p className="notice">Live scores are not configured yet. Add `FOOTBALL_DATA_API_TOKEN` to the backend environment.</p>}
+            {data.liveScoreStatus?.startsWith("unavailable") && <p className="notice">Live scores are unavailable: {data.liveScoreStatus}</p>}
+            {data.sheetsStatus?.startsWith("sheet_unavailable") && <p className="notice">Shared vote storage is unavailable: {data.sheetsStatus}</p>}
+            {voteLoadError && <p className="notice">Match votes are unavailable: {voteLoadError}</p>}
+            {predictionLoadError && <p className="notice">Prediction board is unavailable: {predictionLoadError}</p>}
+          </div>
+        )}
 
         <section id="live" className="section">
           <div className="section-heading">
@@ -442,8 +474,8 @@ function App() {
             <h2>Data notes</h2>
           </div>
           <div className="source-list">
-            {data.sources.map((source) => (
-              <article className="source-item" key={source.url}>
+            {data.sources.map((source, index) => (
+              <article className="source-item" key={`${source.title}-${source.url}-${index}`}>
                 <h3><a href={source.url} target="_blank" rel="noreferrer">{source.title}</a></h3>
                 <p>{source.note}</p>
               </article>
@@ -733,9 +765,7 @@ function LeadersSection({ leaders }) {
       <div className="leaders-grid">
         <article className="mvp-card">
           <span className="leader-kicker">Most valuable player</span>
-          <div className="mvp-photo">
-            <img src={leaders.mvp.photo} alt={leaders.mvp.name} />
-          </div>
+          <MvpPhoto photo={leaders.mvp.photo} name={leaders.mvp.name} />
           <h3>{leaders.mvp.name}</h3>
           <strong>{leaders.mvp.team}</strong>
           <p className="muted">{leaders.mvp.role}</p>
@@ -748,6 +778,26 @@ function LeadersSection({ leaders }) {
         <LeaderList title="Goals + assists" label="Goal involvements" items={leaders.topGoalAssists} />
       </div>
     </section>
+  );
+}
+
+function MvpPhoto({ photo, name }) {
+  const [failed, setFailed] = useState(false);
+  const initials = String(name || "Player")
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  return (
+    <div className="mvp-photo">
+      {photo && !failed ? (
+        <img src={photo} alt={name} onError={() => setFailed(true)} />
+      ) : (
+        <span>{initials}</span>
+      )}
+    </div>
   );
 }
 
@@ -852,6 +902,11 @@ function MatchDetailPanel({ detail, isLoading, error, homeName, awayName }) {
 
   const scoreHome = detail.score?.home ?? 0;
   const scoreAway = detail.score?.away ?? 0;
+  const hasAnyEvents =
+    (detail.events?.goals?.length || 0) +
+    (detail.events?.bookings?.length || 0) +
+    (detail.events?.substitutions?.length || 0) > 0;
+  const hasAnyLineups = (detail.lineups?.home?.length || 0) + (detail.lineups?.away?.length || 0) > 0;
 
   return (
     <div className="match-detail-panel">
@@ -873,6 +928,10 @@ function MatchDetailPanel({ detail, isLoading, error, homeName, awayName }) {
             </div>
           ))}
         </div>
+      )}
+
+      {!hasAnyLineups && !hasAnyEvents && detail.providerStatus === "connected" && (
+        <p className="live-note">Live score is connected. Detailed events and lineups are not available from the current provider feed for this match yet.</p>
       )}
 
       <div className="match-detail-grid">
@@ -1072,8 +1131,8 @@ function VoteTally({ tally, total }) {
   return (
     <article className="vote-card">
       <div className="vote-card-head">
-        <h3>Live fan vote tally</h3>
-        <span>{total} local vote{total === 1 ? "" : "s"}</span>
+        <h3>Champion pick tally</h3>
+        <span>{total} saved champion vote{total === 1 ? "" : "s"}</span>
       </div>
       {tally.map(({ team, count }) => {
         const percent = Math.round((count / denominator) * 100);
@@ -1198,6 +1257,34 @@ function readLocalPredictions() {
   } catch {
     return [];
   }
+}
+
+function mergePredictionBoard(response, entry, currentBoard) {
+  const hasResponseBoard =
+    typeof response?.count === "number" ||
+    (response?.tally && Object.keys(response.tally).length > 0) ||
+    (response?.recent && response.recent.length > 0);
+
+  if (hasResponseBoard) {
+    return {
+      count: response.count || 0,
+      tally: response.tally || {},
+      recent: response.recent || []
+    };
+  }
+
+  const nextCount = (currentBoard?.count || 0) + 1;
+  const nextTally = {
+    ...(currentBoard?.tally || {}),
+    [entry.champion]: ((currentBoard?.tally || {})[entry.champion] || 0) + 1
+  };
+  const nextRecent = [entry, ...(currentBoard?.recent || [])].slice(0, 8);
+
+  return {
+    count: nextCount,
+    tally: nextTally,
+    recent: nextRecent
+  };
 }
 
 function formatVotePercent(count, total) {

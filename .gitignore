@@ -1,6 +1,8 @@
 # Node and React
 node_modules/
 dist/
+.env.local
+.env.development.local
 
 # Local scratch/recovery files
 temp_*.js
