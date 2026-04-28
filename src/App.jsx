@@ -15,35 +15,24 @@ import { fetchForecast, submitPrediction } from "./api";
 
 const FINAL_KICKOFF = "2026-05-30T18:00:00+02:00";
 const LOCAL_PREDICTIONS_KEY = "ucl-predictor-local-predictions-v2";
-const LOCAL_WDW_VOTES_KEY = "ucl-predictor-wdw-votes-v1";
 const FINAL_SIDE_A = new Set(["psg", "bayern"]);
 const FINAL_SIDE_B = new Set(["arsenal", "atleti"]);
+const UCL_LOGO_URL = "https://upload.wikimedia.org/wikipedia/en/6/6f/UEFA_Champions_League_logo.svg";
+const UCL_TROPHY_URL = "https://upload.wikimedia.org/wikipedia/en/8/8f/UEFA_Champions_League_Trophy_-_cropped.jpg";
+const UCL_ANTHEM_URL = "https://www.uefa.com/uefachampionsleague/news/022d-0e1636f1244a-c916aa410dad-1000--champions-league-anthem/";
 
 const fallbackData = {
   model: {
     verifiedDate: "2026-04-27",
     stage: "Semi-finals",
     final: "30 May 2026 • Puskás Aréna, Budapest",
-    favorite: "Paris Saint-Germain",
+    favorite: "Bayern München",
     runnerUp: "Arsenal",
     summary:
-      "PSG and Bayern are intentionally weighted as the two strongest contenders. PSG narrowly lead Bayern because they combine the best remaining goal output with possession control, recoveries, and stronger knockout attacking form."
+      "Bayern and PSG are intentionally weighted as the two strongest contenders. Bayern narrowly lead PSG due to the head-to-head edge, Real Madrid knockout result, and a more balanced attack-defense profile."
   },
   matches: [],
   teams: [],
-  leaders: {
-    mvp: {
-      name: "Julián Alvarez",
-      team: "Atlético de Madrid",
-      role: "Season MVP",
-      photo: "https://commons.wikimedia.org/wiki/Special:FilePath/Juli%C3%A1n%20%C3%81lvarez%20%28footballer%29%202023.jpg",
-      value: "9 goals, 4 assists, 13 goal involvements",
-      note: "Among the remaining players checked, Alvarez owns the strongest combined UCL goal-and-assist profile while also leading Atlético's press and transition threat."
-    },
-    topScorers: [],
-    topAssists: [],
-    topGoalAssists: []
-  },
   sources: [],
   predictionCount: null,
   sheetsStatus: "loading"
@@ -55,7 +44,7 @@ function App() {
   const [now, setNow] = useState(() => Date.now());
   const [form, setForm] = useState({
     name: "",
-    champion: "Paris Saint-Germain",
+    champion: "Bayern München",
     runnerUp: "Arsenal",
     confidence: 72,
     reason: ""
@@ -63,7 +52,6 @@ function App() {
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [localPredictions, setLocalPredictions] = useState(() => readLocalPredictions());
-  const [wdwVotes, setWdwVotes] = useState(() => readWdwVotes());
 
   useEffect(() => {
     fetchForecast()
@@ -89,13 +77,8 @@ function App() {
     localStorage.setItem(LOCAL_PREDICTIONS_KEY, JSON.stringify(localPredictions));
   }, [localPredictions]);
 
-  useEffect(() => {
-    localStorage.setItem(LOCAL_WDW_VOTES_KEY, JSON.stringify(wdwVotes));
-  }, [wdwVotes]);
-
   const teams = data.teams || [];
   const matches = data.matches || [];
-  const leaders = data.leaders || fallbackData.leaders;
   const teamById = useMemo(() => Object.fromEntries(teams.map((team) => [team.id, team])), [teams]);
   const favorite = useMemo(() => teams.find((team) => team.name === data.model.favorite) || teams[0], [teams, data.model.favorite]);
   const selectedChampion = teams.find((team) => team.name === form.champion);
@@ -129,19 +112,6 @@ function App() {
         ? current.runnerUp
         : getFinalOpponentOptions(team.name, teams)[0]?.name || ""
     }));
-  }
-
-  function addWdwVote(matchId, outcome) {
-    setWdwVotes((current) => {
-      const matchVotes = current[matchId] || { home: 0, draw: 0, away: 0 };
-      return {
-        ...current,
-        [matchId]: {
-          ...matchVotes,
-          [outcome]: matchVotes[outcome] + 1
-        }
-      };
-    });
   }
 
   async function handleSubmit(event) {
@@ -194,13 +164,13 @@ function App() {
         <nav className="nav-shell" aria-label="Primary navigation">
           <a className="brand" href="#top">
             <span className="brand-mark"><Sparkles size={18} /></span>
-            <Trophy className="brand-trophy" size={19} aria-hidden="true" />
             <span>UCL Predictor</span>
           </a>
           <div className="nav-links">
+            <a href="#ucl">UCL</a>
+            <a href="#pick">Pick</a>
             <a href="#live">Live</a>
             <a href="#model">Model</a>
-            <a href="#leaders">Leaders</a>
             <a href="#teams">Teams</a>
             <a href="#predict">Predict</a>
           </div>
@@ -224,7 +194,7 @@ function App() {
             </p>
             <FinalCountdown parts={finalCountdown} />
             <div className="hero-actions">
-              <a className="button primary" href="#predict"><Trophy size={18} /> Make prediction</a>
+              <a className="button primary" href="#pick"><Trophy size={18} /> Pick your champion</a>
               <a className="button secondary" href="#live"><Clock3 size={18} /> Match centre</a>
             </div>
           </div>
@@ -239,13 +209,24 @@ function App() {
         </section>
 
         <section className="hero-stat-strip" aria-label="Competition status">
-          <InfoTile label="Current stage" value={data.model.stage} />
-          <InfoTile label="Final date" value="30 May 2026" />
-          <InfoTile label="Final venue" value="Puskás Aréna, Budapest" />
-          <InfoTile label="Fan votes" value={fanVoteCount} />
+          <InfoTile label="Current stage   " value={data.model.stage} />
+          <InfoTile label="Final venue   " value="Puskás Aréna, Budapest" />
+          <InfoTile label="Teams left   " value="4" />
+          <InfoTile label="Fan votes   " value={fanVoteCount} />
         </section>
 
         {loadError && <p className="notice">Backend data could not load: {loadError}</p>}
+
+        <UclIdentitySection />
+
+        <section id="pick" className="section pick-section">
+          <div className="section-heading centered">
+            <p className="eyebrow">Pick your champion</p>
+            <h2>Choose who survives the semi-finals</h2>
+            <p>Select a club here and it fills your prediction form below. The cards use the model data, team stats, and crest assets from the app.</p>
+          </div>
+          <ChampionSelector teams={teams} selected={form.champion} onSelect={selectChampion} />
+        </section>
 
         <section id="live" className="section">
           <div className="section-heading">
@@ -255,14 +236,7 @@ function App() {
           </div>
           <div className="match-grid">
             {matches.map((match) => (
-              <MatchCard
-                match={match}
-                teamById={teamById}
-                now={now}
-                wdwVotes={wdwVotes[match.id]}
-                onWdwVote={addWdwVote}
-                key={match.id}
-              />
+              <MatchCard match={match} teamById={teamById} now={now} key={match.id} />
             ))}
           </div>
         </section>
@@ -281,42 +255,55 @@ function App() {
         <section className="section analysis-section">
           <div className="section-heading">
             <p className="eyebrow">Analysis</p>
-            <h2>PSG and Bayern lead the model</h2>
+            <h2>Bayern and PSG lead the model</h2>
             <p>
-              PSG get the narrow champion call, Bayern remain the closest challenger, Arsenal carry the best defensive
+              Bayern get the narrow champion call, PSG remain the closest challenger, Arsenal carry the best defensive
               disruption case, and Atlético are the volatile outsider.
             </p>
           </div>
           <div className="analysis-grid">
-            <AnalysisCard icon={<Crown />} title="PSG case" text="PSG's goal total, possession control, high recoveries, and knockout attacking proof make them the projected champion." />
-            <AnalysisCard icon={<Activity />} title="Bayern case" text="Kane's scoring volume, Olise creation, and balanced attacking structure keep Bayern close enough to swing the tie." />
+            <AnalysisCard icon={<Crown />} title="Bayern case" text="Balanced attack, Kane scoring volume, Olise creation, and the head-to-head boost over PSG make Bayern the projected champion." />
+            <AnalysisCard icon={<Activity />} title="PSG case" text="PSG's goal total, possession control, passing quality, and knockout attacking proof make them a near co-favorite." />
             <AnalysisCard icon={<ShieldCheck />} title="Arsenal case" text="Arsenal have the strongest defensive card left, with low concessions and a realistic path if the other semi-final is costly." />
             <AnalysisCard icon={<BarChart3 />} title="Atlético case" text="Atlético can score and recover the ball aggressively, but their goals-conceded profile pulls them behind the field." />
           </div>
         </section>
 
-        <section id="leaders" className="section leaders-section">
+        <section id="teams" className="section">
           <div className="section-heading">
-            <p className="eyebrow">Season leaders</p>
-            <h2>MVP, scorers, assists and G/A</h2>
-            <p>Key individual leaders from the remaining Champions League field and the player profile driving the model.</p>
+            <p className="eyebrow">Remaining teams</p>
+            <h2>Photos, players, strengths and weaknesses</h2>
           </div>
-          <LeadersBoard leaders={leaders} />
+          <div className="team-grid">
+            {teams.map((team) => <TeamCard team={team} key={team.id} />)}
+          </div>
         </section>
 
         <section id="predict" className="section prediction-section">
           <div className="section-heading">
             <p className="eyebrow">Your call</p>
-            <h2>Pick and submit your champion</h2>
-            <p>Select the club you believe will lift the trophy, choose the valid final opponent, and cast your prediction.</p>
+            <h2>Submit your champion prediction</h2>
+            <p>Your prediction is posted to Django when Sheets is configured. It is also shown immediately in this browser's live fan board.</p>
           </div>
-          <ChampionSelector teams={teams} selected={form.champion} onSelect={selectChampion} />
           <div className="prediction-layout single">
             <form className="prediction-form" onSubmit={handleSubmit}>
               <div className="selected-pick">
                 {selectedChampion && <img className={`selected-logo selected-logo-${selectedChampion.id}`} src={selectedChampion.logo} alt={`${selectedChampion.name} logo`} />}
                 <span>Selected champion</span>
                 <strong>{form.champion || "Choose a team"}</strong>
+              </div>
+              <div className="mini-picker" aria-label="Champion quick picker">
+                {teams.map((team) => (
+                  <button
+                    className={`mini-pick ${form.champion === team.name ? "active" : ""}`}
+                    type="button"
+                    onClick={() => selectChampion(team)}
+                    key={team.id}
+                  >
+                    <img className={`mini-logo mini-logo-${team.id}`} src={team.logo} alt="" />
+                    <span>{team.name}</span>
+                  </button>
+                ))}
               </div>
               <label>
                 Name
@@ -350,16 +337,6 @@ function App() {
           </div>
         </section>
 
-        <section id="teams" className="section">
-          <div className="section-heading">
-            <p className="eyebrow">Remaining teams</p>
-            <h2>Players, managers, strengths and weaknesses</h2>
-          </div>
-          <div className="team-grid">
-            {teams.map((team) => <TeamCard team={team} key={team.id} />)}
-          </div>
-        </section>
-
         <section className="section source-section">
           <div className="section-heading">
             <p className="eyebrow">Sources</p>
@@ -387,21 +364,16 @@ function App() {
                 interactive experiences. This Champions League predictor combines forecasting logic,
                 live match context, and a clean fan prediction workflow.
               </p>
-              <div className="contact-actions">
-                <a className="button secondary compact" href="https://www.linkedin.com/in/jerome-jayapal-26209aa1/" target="_blank" rel="noreferrer">
-                  Connect on LinkedIn
-                </a>
-                <a className="button secondary compact" href="mailto:jeriedev@gmail.com">
-                  jeriedev@gmail.com
-                </a>
-              </div>
+              <a className="button secondary compact" href="https://www.linkedin.com/in/jerome-jayapal-26209aa1/" target="_blank" rel="noreferrer">
+                Connect on LinkedIn
+              </a>
             </div>
           </div>
         </section>
       </main>
 
       <footer className="site-footer">
-        <p><span className="copyright-mark">©</span> Jerome Jayapal. All rights reserved. Fan-made prediction project. Not affiliated with UEFA or any club.</p>
+        <p>Made by Jerome Jayapal. Copyright protected. Fan-made prediction project. Not affiliated with UEFA or any club.</p>
       </footer>
     </>
   );
@@ -414,6 +386,37 @@ function ChampionSelector({ teams, selected, onSelect }) {
         <ChampionPickCard team={team} selected={selected === team.name} onSelect={() => onSelect(team)} key={team.id} />
       ))}
     </div>
+  );
+}
+
+function UclIdentitySection() {
+  return (
+    <section id="ucl" className="section ucl-identity-section">
+      <div className="ucl-identity-card">
+        <div className="ucl-brand-panel">
+          <img src={UCL_LOGO_URL} alt="UEFA Champions League logo" className="ucl-logo" loading="lazy" />
+          <div>
+            <p className="eyebrow">Champions League theme</p>
+            <h2>European nights under the lights</h2>
+            <p>
+              Starball branding, the trophy, and the anthem mood bring the page closer to a true Champions League
+              match-night experience while keeping the project clearly fan-made.
+            </p>
+          </div>
+        </div>
+        <div className="ucl-trophy-panel">
+          <img src={UCL_TROPHY_URL} alt="UEFA Champions League trophy" className="ucl-trophy" loading="lazy" />
+          <div className="anthem-card">
+            <span className="anthem-kicker">Anthem</span>
+            <strong>Champions League</strong>
+            <p>Official UEFA background on Tony Britten's anthem. Audio is linked, not downloaded or bundled.</p>
+            <a className="button secondary compact" href={UCL_ANTHEM_URL} target="_blank" rel="noreferrer">
+              Open anthem story
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -460,14 +463,13 @@ function InfoTile({ label, value }) {
   );
 }
 
-function MatchCard({ match, teamById, now, wdwVotes, onWdwVote }) {
+function MatchCard({ match, teamById, now }) {
   const home = teamById[match.homeTeamId];
   const away = teamById[match.awayTeamId];
   const kickoffTime = new Date(match.kickoff).getTime();
   const hasScore = match.homeScore !== null && match.awayScore !== null;
   const isPastKickoff = now >= kickoffTime;
   const status = hasScore ? match.status : isPastKickoff ? "awaiting live update" : "upcoming";
-  const legPrediction = home && away ? buildLegPrediction(home, away) : null;
 
   return (
     <article className="match-card">
@@ -481,21 +483,10 @@ function MatchCard({ match, teamById, now, wdwVotes, onWdwVote }) {
         <span className="score-divider">vs</span>
         <TeamScore team={away} fallbackName={match.awayTeam} score={match.awayScore} />
       </div>
-      {legPrediction && <ModelScoreline prediction={legPrediction} home={home} away={away} />}
-      {home && away && (
-        <UserWdwVote
-          match={match}
-          home={home}
-          away={away}
-          votes={wdwVotes}
-          onVote={onWdwVote}
-        />
-      )}
       <div className="match-footer">
         <span>{match.venue}</span>
         <span className="status-pill">{status}</span>
       </div>
-      {legPrediction && <LegPredictionPanel prediction={legPrediction} />}
       {!hasScore && !isPastKickoff && <Countdown target={kickoffTime} now={now} />}
       {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Add a live-score API or update backend score fields to publish live numbers.</p>}
       <a className="button secondary compact" href={match.liveUrl} target="_blank" rel="noreferrer">
@@ -528,102 +519,6 @@ function TeamScore({ team, fallbackName, score }) {
       {team && <img className={`crest crest-${team.id}`} src={team.logo} alt={`${team.name} logo`} loading="lazy" />}
       <span>{team?.name || fallbackName}</span>
       <strong>{score ?? "–"}</strong>
-    </div>
-  );
-}
-
-function LegPredictionPanel({ prediction }) {
-  return (
-    <div className="leg-prediction">
-      <div className="leg-prediction-top">
-        <span>Leg prediction</span>
-        <strong>{prediction.winner.name}</strong>
-        <em>{prediction.edge}% edge</em>
-      </div>
-      <div className="leg-meter" aria-label={`${prediction.winner.name} projected edge ${prediction.edge}%`}>
-        <span style={{ width: `${prediction.edge}%` }} />
-      </div>
-      <div className="factor-grid">
-        {prediction.factors.map((factor) => (
-          <div className="factor-chip" key={factor.label}>
-            <span>{factor.label}</span>
-            <strong>{factor.value}</strong>
-            <small>{factor.note}</small>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ModelScoreline({ prediction, home, away }) {
-  return (
-    <div className="model-scoreline">
-      <div>
-        <span>Stats-based score prediction</span>
-        <strong>{prediction.scoreline}</strong>
-        <small>xG: {home.name} {prediction.expected.home.toFixed(1)} - {prediction.expected.away.toFixed(1)} {away.name}</small>
-      </div>
-      <WinDrawWin home={home} away={away} probabilities={prediction.probabilities} />
-    </div>
-  );
-}
-
-function WinDrawWin({ home, away, probabilities, active, onSelect }) {
-  const items = [
-    { key: "home", label: home.name, value: probabilities.home },
-    { key: "draw", label: "Draw", value: probabilities.draw },
-    { key: "away", label: away.name, value: probabilities.away }
-  ];
-
-  return (
-    <div className="wdw-row" aria-label="Win draw win probability">
-      {items.map((item) => (
-        <button
-          className={`wdw-chip ${active === item.key ? "active" : ""} ${onSelect ? "clickable" : ""}`}
-          type="button"
-          onClick={onSelect ? () => onSelect(item.key) : undefined}
-          key={item.key}
-        >
-          <span>{item.label}</span>
-          <strong>{item.value}%</strong>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function UserWdwVote({ match, home, away, votes, onVote }) {
-  const counts = votes || { home: 0, draw: 0, away: 0 };
-  const total = counts.home + counts.draw + counts.away;
-  const percentages = total
-    ? {
-        home: Math.round((counts.home / total) * 100),
-        draw: Math.round((counts.draw / total) * 100),
-        away: 100 - Math.round((counts.home / total) * 100) - Math.round((counts.draw / total) * 100)
-      }
-    : { home: 0, draw: 0, away: 0 };
-
-  return (
-    <div className="score-predictor">
-      <div className="score-predictor-head">
-        <span>Fan Win-Draw-Win</span>
-        <strong>{total} vote{total === 1 ? "" : "s"}</strong>
-      </div>
-      <div className="user-wdw">
-        <span>Click to add a vote</span>
-        <WinDrawWin
-          home={home}
-          away={away}
-          onSelect={(outcome) => onVote(match.id, outcome)}
-          probabilities={percentages}
-        />
-      </div>
-      <div className="vote-count-row">
-        <span>{home.name}: {counts.home}</span>
-        <span>Draw: {counts.draw}</span>
-        <span>{away.name}: {counts.away}</span>
-      </div>
     </div>
   );
 }
@@ -678,50 +573,10 @@ function AnalysisCard({ icon, title, text }) {
   );
 }
 
-function LeadersBoard({ leaders }) {
-  return (
-    <div className="leaders-grid">
-      <article className="mvp-card">
-        {leaders.mvp.photo && <img className="mvp-photo" src={leaders.mvp.photo} alt={leaders.mvp.name} loading="lazy" />}
-        <span className="leader-kicker">{leaders.mvp.role}</span>
-        <h3>{leaders.mvp.name}</h3>
-        <strong>{leaders.mvp.team}</strong>
-        <p>{leaders.mvp.value}</p>
-        <small>{leaders.mvp.note}</small>
-      </article>
-      <LeaderList title="Top scorers" metric="Goals" rows={leaders.topScorers} />
-      <LeaderList title="Top assists" metric="Assists" rows={leaders.topAssists} />
-      <LeaderList title="Top G/A" metric="G/A" rows={leaders.topGoalAssists} />
-    </div>
-  );
-}
-
-function LeaderList({ title, metric, rows = [] }) {
-  return (
-    <article className="leader-list">
-      <div className="leader-list-head">
-        <h3>{title}</h3>
-        <span>{metric}</span>
-      </div>
-      <div className="leader-rows">
-        {rows.map((row) => (
-          <div className="leader-row" key={`${title}-${row.rank}-${row.name}`}>
-            <span className="leader-rank">{row.rank}</span>
-            <span>
-              <strong>{row.name}</strong>
-              <small>{row.team}</small>
-            </span>
-            <em>{row.value}</em>
-          </div>
-        ))}
-      </div>
-    </article>
-  );
-}
-
 function TeamCard({ team }) {
   return (
     <article className="team-card detailed">
+      <TeamPhoto team={team} />
       <header>
         <img className={`crest crest-${team.id}`} src={team.logo} alt={`${team.name} logo`} loading="lazy" />
         <div>
@@ -794,7 +649,7 @@ function RecentForm({ form }) {
   return (
     <div className="recent-form-grid">
       <FormColumn title="Champions League last 5" items={form.championsLeague} />
-      <FormColumn title="Domestic league last 5" items={form.league} />
+      <FormColumn title="League last 5" items={form.league} />
     </div>
   );
 }
@@ -811,6 +666,26 @@ function FormColumn({ title, items = [] }) {
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+function TeamPhoto({ team }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed || !team.photo) {
+    return (
+      <div className="team-photo fallback">
+        <img src={team.logo} alt={`${team.name} logo`} loading="lazy" />
+        {team.photoPage && <a href={team.photoPage} target="_blank" rel="noreferrer">Open club photos</a>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="team-photo">
+      <img src={team.photo} alt={`${team.name} squad`} loading="lazy" onError={() => setFailed(true)} />
+      {team.photoPage && <a href={team.photoPage} target="_blank" rel="noreferrer">Official photo source</a>}
     </div>
   );
 }
@@ -907,127 +782,6 @@ function getCountdownParts(target, now) {
   };
 }
 
-function buildLegPrediction(home, away) {
-  const homeRating = buildTeamLegScore(home, true);
-  const awayRating = buildTeamLegScore(away, false);
-  const expected = buildExpectedGoals(home, away, homeRating, awayRating);
-  const probabilities = buildWinDrawWin(expected.home, expected.away);
-  const winner = probabilities.home >= probabilities.away ? home : away;
-  const loser = winner.id === home.id ? away : home;
-  const edge = Math.max(probabilities.home, probabilities.away);
-
-  return {
-    winner,
-    edge,
-    expected,
-    probabilities,
-    scoreline: buildModelScoreline(home, away, expected),
-    factors: buildLegFactors(winner, loser, winner.id === home.id)
-  };
-}
-
-function buildExpectedGoals(home, away, homeRating, awayRating) {
-  const homeAttack = Number(home.stats.goals || 0) / Math.max(Number(away.stats.conceded || 1), 1);
-  const awayAttack = Number(away.stats.goals || 0) / Math.max(Number(home.stats.conceded || 1), 1);
-  const homeControl = (parsePercent(home.stats.possession) + parsePercent(home.stats.passing)) / 190;
-  const awayControl = (parsePercent(away.stats.possession) + parsePercent(away.stats.passing)) / 190;
-  const ratingGap = (homeRating - awayRating) / 45;
-
-  return {
-    home: clampNumber(1.05 + homeAttack * 0.26 + homeControl * 0.34 + ratingGap * 0.22, 0.4, 3.6),
-    away: clampNumber(0.9 + awayAttack * 0.25 + awayControl * 0.3 - ratingGap * 0.12, 0.3, 3.4)
-  };
-}
-
-function buildWinDrawWin(homeXg, awayXg) {
-  const diff = homeXg - awayXg;
-  const draw = clamp(Math.round(27 - Math.abs(diff) * 7), 16, 31);
-  const remaining = 100 - draw;
-  const homeShare = 1 / (1 + Math.exp(-diff * 1.45));
-  const home = clamp(Math.round(remaining * homeShare), 10, remaining - 10);
-  const away = 100 - draw - home;
-
-  return { home, draw, away };
-}
-
-function buildModelScoreline(home, away, expected) {
-  const homeGoals = clamp(Math.round(expected.home), 0, 5);
-  const awayGoals = clamp(Math.round(expected.away), 0, 5);
-
-  if (homeGoals === awayGoals && Math.abs(expected.home - expected.away) > 0.28) {
-    return expected.home > expected.away
-      ? `${home.name} ${homeGoals + 1}-${awayGoals} ${away.name}`
-      : `${home.name} ${homeGoals}-${awayGoals + 1} ${away.name}`;
-  }
-
-  return `${home.name} ${homeGoals}-${awayGoals} ${away.name}`;
-}
-
-function buildTeamLegScore(team, isHome) {
-  return (
-    team.probability * 1.4 +
-    Number(team.stats.goals || 0) * 0.75 -
-    Number(team.stats.conceded || 0) * 0.42 +
-    Number(team.stats.cleanSheets || 0) * 1.2 +
-    Number(team.stats.recoveries || 0) * 0.018 +
-    parsePercent(team.stats.possession) * 0.18 +
-    parsePercent(team.stats.passing) * 0.12 +
-    (isHome ? 4 : 0)
-  );
-}
-
-function buildLegFactors(winner, loser, isHomeWinner) {
-  const goalGap = Number(winner.stats.goals || 0) - Number(loser.stats.goals || 0);
-  const concededGap = Number(loser.stats.conceded || 0) - Number(winner.stats.conceded || 0);
-  const possessionGap = parsePercent(winner.stats.possession) - parsePercent(loser.stats.possession);
-  const recoveryGap = Number(winner.stats.recoveries || 0) - Number(loser.stats.recoveries || 0);
-
-  return [
-    {
-      label: "Venue",
-      value: isHomeWinner ? "Home edge" : "Away edge",
-      note: isHomeWinner ? `${winner.name} get crowd and travel advantage.` : `${winner.name} rate higher even away from home.`
-    },
-    {
-      label: "Attack",
-      value: `${winner.stats.goals} goals`,
-      note: goalGap >= 0 ? `${Math.abs(goalGap)} more than ${loser.name}.` : `Lower total, but stronger matchup balance.`
-    },
-    {
-      label: "Defence",
-      value: `${winner.stats.conceded} conceded`,
-      note: concededGap >= 0 ? `${concededGap} fewer conceded than ${loser.name}.` : `Risk factor: ${loser.name} concede less.`
-    },
-    {
-      label: "Control",
-      value: winner.stats.possession,
-      note: possessionGap >= 0 ? `${possessionGap.toFixed(1)}% possession edge.` : `${loser.name} may control more of the ball.`
-    },
-    {
-      label: "Pressure",
-      value: `${winner.stats.recoveries} recoveries`,
-      note: recoveryGap >= 0 ? `${recoveryGap} recovery advantage.` : `${loser.name} recover more balls.`
-    },
-    {
-      label: "Model",
-      value: `${winner.probability}% title rate`,
-      note: `Higher overall tournament projection than ${loser.name}.`
-    }
-  ];
-}
-
-function parsePercent(value) {
-  return Number(String(value || "0").replace("%", "")) || 0;
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function clampNumber(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
 function formatKickoff(value) {
   return new Intl.DateTimeFormat(undefined, {
     weekday: "short",
@@ -1075,14 +829,6 @@ function readLocalPredictions() {
     return JSON.parse(localStorage.getItem(LOCAL_PREDICTIONS_KEY) || "[]");
   } catch {
     return [];
-  }
-}
-
-function readWdwVotes() {
-  try {
-    return JSON.parse(localStorage.getItem(LOCAL_WDW_VOTES_KEY) || "{}");
-  } catch {
-    return {};
   }
 }
 
