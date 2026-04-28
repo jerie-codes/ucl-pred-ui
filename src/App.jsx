@@ -5,17 +5,19 @@ import {
   Clock3,
   Crown,
   Database,
+  Eye,
+  EyeOff,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   Trophy
 } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
-import { fetchForecast, submitPrediction } from "./api";
+import { fetchForecast, fetchMatchDetail, fetchMatchVotes, fetchPredictions, submitMatchVote, submitPrediction } from "./api";
 
 const FINAL_KICKOFF = "2026-05-30T18:00:00+02:00";
 const LOCAL_PREDICTIONS_KEY = "ucl-predictor-local-predictions-v2";
-const LOCAL_WDW_VOTES_KEY = "ucl-predictor-wdw-votes-v1";
+const EMPTY_VOTE_COUNTS = { home: 0, draw: 0, away: 0 };
 const FINAL_SIDE_A = new Set(["psg", "bayern"]);
 const FINAL_SIDE_B = new Set(["arsenal", "atleti"]);
 
@@ -24,26 +26,13 @@ const fallbackData = {
     verifiedDate: "2026-04-27",
     stage: "Semi-finals",
     final: "30 May 2026 • Puskás Aréna, Budapest",
-    favorite: "Paris Saint-Germain",
+    favorite: "Bayern München",
     runnerUp: "Arsenal",
     summary:
-      "PSG and Bayern are intentionally weighted as the two strongest contenders. PSG narrowly lead Bayern because they combine the best remaining goal output with possession control, recoveries, and stronger knockout attacking form."
+      "Bayern and PSG are intentionally weighted as the two strongest contenders. Bayern narrowly lead PSG due to the head-to-head edge, Real Madrid knockout result, and a more balanced attack-defense profile."
   },
   matches: [],
   teams: [],
-  leaders: {
-    mvp: {
-      name: "Julián Alvarez",
-      team: "Atlético de Madrid",
-      role: "Season MVP",
-      photo: "https://commons.wikimedia.org/wiki/Special:FilePath/Juli%C3%A1n%20%C3%81lvarez%20%28footballer%29%202023.jpg",
-      value: "9 goals, 4 assists, 13 goal involvements",
-      note: "Among the remaining players checked, Alvarez owns the strongest combined UCL goal-and-assist profile while also leading Atlético's press and transition threat."
-    },
-    topScorers: [],
-    topAssists: [],
-    topGoalAssists: []
-  },
   sources: [],
   predictionCount: null,
   sheetsStatus: "loading"
@@ -55,7 +44,7 @@ function App() {
   const [now, setNow] = useState(() => Date.now());
   const [form, setForm] = useState({
     name: "",
-    champion: "Paris Saint-Germain",
+    champion: "Bayern München",
     runnerUp: "Arsenal",
     confidence: 72,
     reason: ""
@@ -63,21 +52,88 @@ function App() {
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [localPredictions, setLocalPredictions] = useState(() => readLocalPredictions());
-  const [wdwVotes, setWdwVotes] = useState(() => readWdwVotes());
+  const [matchVotes, setMatchVotes] = useState({});
+  const [sharedPredictions, setSharedPredictions] = useState({ count: 0, tally: {}, recent: [] });
+  const [voteLoadError, setVoteLoadError] = useState("");
+  const [predictionLoadError, setPredictionLoadError] = useState("");
+  const [hasInitializedForm, setHasInitializedForm] = useState(false);
+  const teams = data.teams || [];
+  const matches = data.matches || [];
+  const hasLiveMatch = matches.some((match) => isLiveStatus(match.status));
 
   useEffect(() => {
-    fetchForecast()
-      .then((forecast) => {
+    let isActive = true;
+
+    async function loadForecast() {
+      try {
+        const forecast = await fetchForecast();
+        if (!isActive) return;
+
         setData(forecast);
-        if (forecast.teams?.length) {
+        setLoadError("");
+
+        if (!hasInitializedForm && forecast.teams?.length) {
           setForm((current) => ({
             ...current,
             champion: forecast.model.favorite,
             runnerUp: forecast.model.runnerUp
           }));
+          setHasInitializedForm(true);
         }
-      })
-      .catch((error) => setLoadError(error.message));
+      } catch (error) {
+        if (isActive) {
+          setLoadError(error.message);
+        }
+      }
+    }
+
+    loadForecast();
+    const poller = window.setInterval(loadForecast, hasLiveMatch ? 10000 : 30000);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(poller);
+    };
+  }, [hasInitializedForm, hasLiveMatch]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadCommunityData() {
+      try {
+        const voteData = await fetchMatchVotes();
+        if (!isActive) return;
+        setMatchVotes(voteData.voteCounts || {});
+        setVoteLoadError("");
+      } catch (error) {
+        if (isActive) {
+          setVoteLoadError(error.message);
+        }
+      }
+
+      try {
+        const predictionData = await fetchPredictions();
+        if (!isActive) return;
+        setSharedPredictions({
+          count: predictionData.count || 0,
+          tally: predictionData.tally || {},
+          recent: predictionData.recent || []
+        });
+        setPredictionLoadError("");
+      } catch (error) {
+        if (isActive) {
+          setPredictionLoadError(error.message);
+        }
+      }
+    }
+
+    loadCommunityData();
+    const poller = window.setInterval(loadCommunityData, 30000);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(poller);
+    };
   }, []);
 
   useEffect(() => {
@@ -88,30 +144,19 @@ function App() {
   useEffect(() => {
     localStorage.setItem(LOCAL_PREDICTIONS_KEY, JSON.stringify(localPredictions));
   }, [localPredictions]);
-
-  useEffect(() => {
-    localStorage.setItem(LOCAL_WDW_VOTES_KEY, JSON.stringify(wdwVotes));
-  }, [wdwVotes]);
-
-  const teams = data.teams || [];
-  const matches = data.matches || [];
-  const leaders = data.leaders || fallbackData.leaders;
   const teamById = useMemo(() => Object.fromEntries(teams.map((team) => [team.id, team])), [teams]);
   const favorite = useMemo(() => teams.find((team) => team.name === data.model.favorite) || teams[0], [teams, data.model.favorite]);
   const selectedChampion = teams.find((team) => team.name === form.champion);
   const runnerUpOptions = useMemo(() => getFinalOpponentOptions(form.champion, teams), [form.champion, teams]);
   const finalCountdown = getCountdownParts(new Date(FINAL_KICKOFF).getTime(), now);
-  const fanVoteCount = (data.predictionCount || 0) + localPredictions.length;
+  const fanVoteCount = sharedPredictions.count || data.predictionCount || localPredictions.length;
 
   const voteTally = useMemo(() => {
-    const counts = Object.fromEntries(teams.map((team) => [team.name, 0]));
-    localPredictions.forEach((prediction) => {
-      if (counts[prediction.champion] !== undefined) counts[prediction.champion] += 1;
-    });
+    const counts = Object.fromEntries(teams.map((team) => [team.name, sharedPredictions.tally[team.name] || 0]));
     return teams
       .map((team) => ({ team, count: counts[team.name] || 0 }))
       .sort((a, b) => b.count - a.count || b.team.probability - a.team.probability);
-  }, [teams, localPredictions]);
+  }, [teams, sharedPredictions]);
 
   function updateField(event) {
     const { name, value } = event.target;
@@ -129,19 +174,6 @@ function App() {
         ? current.runnerUp
         : getFinalOpponentOptions(team.name, teams)[0]?.name || ""
     }));
-  }
-
-  function addWdwVote(matchId, outcome) {
-    setWdwVotes((current) => {
-      const matchVotes = current[matchId] || { home: 0, draw: 0, away: 0 };
-      return {
-        ...current,
-        [matchId]: {
-          ...matchVotes,
-          [outcome]: matchVotes[outcome] + 1
-        }
-      };
-    });
   }
 
   async function handleSubmit(event) {
@@ -173,10 +205,12 @@ function App() {
     try {
       const response = await submitPrediction(form);
       setStatus(response.message || "Prediction saved.");
+      setSharedPredictions((current) => mergePredictionBoard(response, entry, current));
+      setLocalPredictions((current) => [entry, ...current].slice(0, 40));
     } catch (error) {
       setStatus(`Saved locally. Backend note: ${error.message}`);
-    } finally {
       setLocalPredictions((current) => [entry, ...current].slice(0, 40));
+    } finally {
       setForm({
         name: "",
         champion: data.model.favorite,
@@ -188,16 +222,25 @@ function App() {
     }
   }
 
+  async function handleMatchVote(matchId, outcome) {
+    const response = await submitMatchVote({ matchId, outcome });
+    setMatchVotes((current) => ({
+      ...current,
+      [matchId]: response.voteCounts || EMPTY_VOTE_COUNTS
+    }));
+    return response.voteCounts || EMPTY_VOTE_COUNTS;
+  }
+
   return (
     <>
       <header className="site-header">
         <nav className="nav-shell" aria-label="Primary navigation">
           <a className="brand" href="#top">
             <span className="brand-mark"><Sparkles size={18} /></span>
-            <Trophy className="brand-trophy" size={19} aria-hidden="true" />
             <span>UCL Predictor</span>
           </a>
           <div className="nav-links">
+            <a href="#predict">Pick</a>
             <a href="#live">Live</a>
             <a href="#model">Model</a>
             <a href="#leaders">Leaders</a>
@@ -224,7 +267,7 @@ function App() {
             </p>
             <FinalCountdown parts={finalCountdown} />
             <div className="hero-actions">
-              <a className="button primary" href="#predict"><Trophy size={18} /> Make prediction</a>
+              <a className="button primary" href="#predict"><Trophy size={18} /> Make your call</a>
               <a className="button secondary" href="#live"><Clock3 size={18} /> Match centre</a>
             </div>
           </div>
@@ -238,14 +281,86 @@ function App() {
           )}
         </section>
 
+        {false && (
+        <section className="section leaders-section">
+          <div className="section-heading">
+            <p className="eyebrow">Leaders</p>
+            <h2>Top performers — goals, assists, MVP</h2>
+            <p>Season leaders among the remaining squads: top scorers, assist makers, and an MVP candidate.</p>
+          </div>
+          <div className="leaders-grid">
+            {data.leaders && (
+              <>
+                <article className="mvp-card">
+                  <span className="leader-kicker">Most valuable player</span>
+                  <div className="mvp-photo">
+                    <img src={data.leaders.mvp.photo} alt={data.leaders.mvp.name} />
+                  </div>
+                  <h3>{data.leaders.mvp.name}</h3>
+                  <strong>{data.leaders.mvp.team}</strong>
+                  <p className="muted">{data.leaders.mvp.role}</p>
+                  <p>{data.leaders.mvp.value}</p>
+                  <p className="muted small">{data.leaders.mvp.note}</p>
+                </article>
+
+                <article className="leader-list">
+                  <div className="leader-list-head">
+                    <h3>Top scorers</h3>
+                    <span>Goals</span>
+                  </div>
+                  <div className="leader-rows">
+                    {data.leaders.topScorers.map((s) => (
+                      <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="leader-list">
+                  <div className="leader-list-head">
+                    <h3>Top assists</h3>
+                    <span>Assists</span>
+                  </div>
+                  <div className="leader-rows">
+                    {data.leaders.topAssists.map((s) => (
+                      <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="leader-list">
+                  <div className="leader-list-head">
+                    <h3>Goals + assists</h3>
+                    <span>Goal involvements</span>
+                  </div>
+                  <div className="leader-rows">
+                    {data.leaders.topGoalAssists.map((s) => (
+                      <li key={s.rank}>{s.rank}. {s.name} — {s.team} ({s.value})</li>
+                    ))}
+                  </div>
+                </article>
+              </>
+            )}
+          </div>
+        </section>
+        )}
+
         <section className="hero-stat-strip" aria-label="Competition status">
-          <InfoTile label="Current stage" value={data.model.stage} />
-          <InfoTile label="Final date" value="30 May 2026" />
-          <InfoTile label="Final venue" value="Puskás Aréna, Budapest" />
-          <InfoTile label="Fan votes" value={fanVoteCount} />
+          <InfoTile label="Current stage   " value={data.model.stage} />
+          <InfoTile label="Final venue   " value="Puskás Aréna, Budapest" />
+          <InfoTile label="Teams left   " value="4" />
+          <InfoTile label="Fan votes   " value={fanVoteCount} />
         </section>
 
-        {loadError && <p className="notice">Backend data could not load: {loadError}</p>}
+        {(loadError || data.liveScoreStatus?.startsWith("unavailable") || data.liveScoreStatus === "not_configured" || data.sheetsStatus?.startsWith("sheet_unavailable") || voteLoadError || predictionLoadError) && (
+          <div className="notice-stack">
+            {loadError && <p className="notice">Backend data could not load: {loadError}</p>}
+            {data.liveScoreStatus === "not_configured" && <p className="notice">Live scores are not configured yet. Add `FOOTBALL_DATA_API_TOKEN` to the backend environment.</p>}
+            {data.liveScoreStatus?.startsWith("unavailable") && <p className="notice">Live scores are unavailable: {data.liveScoreStatus}</p>}
+            {data.sheetsStatus?.startsWith("sheet_unavailable") && <p className="notice">Shared vote storage is unavailable: {data.sheetsStatus}</p>}
+            {voteLoadError && <p className="notice">Match votes are unavailable: {voteLoadError}</p>}
+            {predictionLoadError && <p className="notice">Prediction board is unavailable: {predictionLoadError}</p>}
+          </div>
+        )}
 
         <section id="live" className="section">
           <div className="section-heading">
@@ -259,8 +374,8 @@ function App() {
                 match={match}
                 teamById={teamById}
                 now={now}
-                wdwVotes={wdwVotes[match.id]}
-                onWdwVote={addWdwVote}
+                voteCounts={matchVotes[match.id] || EMPTY_VOTE_COUNTS}
+                onVote={handleMatchVote}
                 key={match.id}
               />
             ))}
@@ -281,34 +396,37 @@ function App() {
         <section className="section analysis-section">
           <div className="section-heading">
             <p className="eyebrow">Analysis</p>
-            <h2>PSG and Bayern lead the model</h2>
+            <h2>Bayern and PSG lead the model</h2>
             <p>
-              PSG get the narrow champion call, Bayern remain the closest challenger, Arsenal carry the best defensive
+              Bayern get the narrow champion call, PSG remain the closest challenger, Arsenal carry the best defensive
               disruption case, and Atlético are the volatile outsider.
             </p>
           </div>
           <div className="analysis-grid">
-            <AnalysisCard icon={<Crown />} title="PSG case" text="PSG's goal total, possession control, high recoveries, and knockout attacking proof make them the projected champion." />
-            <AnalysisCard icon={<Activity />} title="Bayern case" text="Kane's scoring volume, Olise creation, and balanced attacking structure keep Bayern close enough to swing the tie." />
+            <AnalysisCard icon={<Crown />} title="Bayern case" text="Balanced attack, Kane scoring volume, Olise creation, and the head-to-head boost over PSG make Bayern the projected champion." />
+            <AnalysisCard icon={<Activity />} title="PSG case" text="PSG's goal total, possession control, passing quality, and knockout attacking proof make them a near co-favorite." />
             <AnalysisCard icon={<ShieldCheck />} title="Arsenal case" text="Arsenal have the strongest defensive card left, with low concessions and a realistic path if the other semi-final is costly." />
             <AnalysisCard icon={<BarChart3 />} title="Atlético case" text="Atlético can score and recover the ball aggressively, but their goals-conceded profile pulls them behind the field." />
           </div>
         </section>
 
-        <section id="leaders" className="section leaders-section">
+        <LeadersSection leaders={data.leaders} />
+
+        <section id="teams" className="section">
           <div className="section-heading">
-            <p className="eyebrow">Season leaders</p>
-            <h2>MVP, scorers, assists and G/A</h2>
-            <p>Key individual leaders from the remaining Champions League field and the player profile driving the model.</p>
+            <p className="eyebrow">Remaining teams</p>
+            <h2>Photos, players, strengths and weaknesses</h2>
           </div>
-          <LeadersBoard leaders={leaders} />
+          <div className="team-grid">
+            {teams.map((team) => <TeamCard team={team} key={team.id} />)}
+          </div>
         </section>
 
         <section id="predict" className="section prediction-section">
           <div className="section-heading">
             <p className="eyebrow">Your call</p>
-            <h2>Pick and submit your champion</h2>
-            <p>Select the club you believe will lift the trophy, choose the valid final opponent, and cast your prediction.</p>
+            <h2>Make your call</h2>
+            <p>Pick your champion, set a final opponent, and send your prediction. Your vote is posted to Django when Sheets is configured and also appears immediately in this browser.</p>
           </div>
           <ChampionSelector teams={teams} selected={form.champion} onSelect={selectChampion} />
           <div className="prediction-layout single">
@@ -345,18 +463,8 @@ function App() {
             </form>
           </div>
           <div className="fan-board">
-            <VoteTally tally={voteTally} total={localPredictions.length} />
-            <PredictionFeed predictions={localPredictions} teams={teams} now={now} />
-          </div>
-        </section>
-
-        <section id="teams" className="section">
-          <div className="section-heading">
-            <p className="eyebrow">Remaining teams</p>
-            <h2>Players, managers, strengths and weaknesses</h2>
-          </div>
-          <div className="team-grid">
-            {teams.map((team) => <TeamCard team={team} key={team.id} />)}
+            <VoteTally tally={voteTally} total={fanVoteCount} />
+            <PredictionFeed predictions={sharedPredictions.recent.length ? sharedPredictions.recent : localPredictions} teams={teams} now={now} />
           </div>
         </section>
 
@@ -366,8 +474,8 @@ function App() {
             <h2>Data notes</h2>
           </div>
           <div className="source-list">
-            {data.sources.map((source) => (
-              <article className="source-item" key={source.url}>
+            {data.sources.map((source, index) => (
+              <article className="source-item" key={`${source.title}-${source.url}-${index}`}>
                 <h3><a href={source.url} target="_blank" rel="noreferrer">{source.title}</a></h3>
                 <p>{source.note}</p>
               </article>
@@ -387,21 +495,16 @@ function App() {
                 interactive experiences. This Champions League predictor combines forecasting logic,
                 live match context, and a clean fan prediction workflow.
               </p>
-              <div className="contact-actions">
-                <a className="button secondary compact" href="https://www.linkedin.com/in/jerome-jayapal-26209aa1/" target="_blank" rel="noreferrer">
-                  Connect on LinkedIn
-                </a>
-                <a className="button secondary compact" href="mailto:jeriedev@gmail.com">
-                  jeriedev@gmail.com
-                </a>
-              </div>
+              <a className="button secondary compact" href="https://www.linkedin.com/in/jerome-jayapal-26209aa1/" target="_blank" rel="noreferrer">
+                Connect on LinkedIn
+              </a>
             </div>
           </div>
         </section>
       </main>
 
       <footer className="site-footer">
-        <p><span className="copyright-mark">©</span> Jerome Jayapal. All rights reserved. Fan-made prediction project. Not affiliated with UEFA or any club.</p>
+        <p>Made by Jerome Jayapal. Copyright protected. Fan-made prediction project. Not affiliated with UEFA or any club.</p>
       </footer>
     </>
   );
@@ -460,14 +563,68 @@ function InfoTile({ label, value }) {
   );
 }
 
-function MatchCard({ match, teamById, now, wdwVotes, onWdwVote }) {
+function MatchCard({ match, teamById, now, voteCounts, onVote }) {
   const home = teamById[match.homeTeamId];
   const away = teamById[match.awayTeamId];
   const kickoffTime = new Date(match.kickoff).getTime();
   const hasScore = match.homeScore !== null && match.awayScore !== null;
   const isPastKickoff = now >= kickoffTime;
   const status = hasScore ? match.status : isPastKickoff ? "awaiting live update" : "upcoming";
-  const legPrediction = home && away ? buildLegPrediction(home, away) : null;
+  const isLive = isLiveStatus(match.status);
+  const [selectedOutcome, setSelectedOutcome] = useState("");
+  const [showDetails, setShowDetails] = useState(false);
+  const [matchDetail, setMatchDetail] = useState(null);
+  const [detailError, setDetailError] = useState("");
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [isVoteSaving, setIsVoteSaving] = useState(false);
+  const [voteError, setVoteError] = useState("");
+
+  useEffect(() => {
+    if (!showDetails) return undefined;
+
+    let isActive = true;
+
+    async function loadDetail() {
+      try {
+        setIsDetailLoading(true);
+        const detail = await fetchMatchDetail(match.id);
+        if (!isActive) return;
+        setMatchDetail(detail);
+        setDetailError("");
+      } catch (error) {
+        if (isActive) {
+          setDetailError(error.message);
+        }
+      } finally {
+        if (isActive) {
+          setIsDetailLoading(false);
+        }
+      }
+    }
+
+    loadDetail();
+    const poller = window.setInterval(loadDetail, isLiveStatus(matchDetail?.status || match.status) ? 10000 : 30000);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(poller);
+    };
+  }, [showDetails, match.id]);
+
+  async function handleOutcomeVote(outcome) {
+    if (selectedOutcome || isVoteSaving) return;
+
+    setIsVoteSaving(true);
+    setVoteError("");
+    try {
+      await onVote(match.id, outcome);
+      setSelectedOutcome(outcome);
+    } catch (error) {
+      setVoteError(error.message || "Could not save your vote.");
+    } finally {
+      setIsVoteSaving(false);
+    }
+  }
 
   return (
     <article className="match-card">
@@ -481,23 +638,36 @@ function MatchCard({ match, teamById, now, wdwVotes, onWdwVote }) {
         <span className="score-divider">vs</span>
         <TeamScore team={away} fallbackName={match.awayTeam} score={match.awayScore} />
       </div>
-      {legPrediction && <ModelScoreline prediction={legPrediction} home={home} away={away} />}
-      {home && away && (
-        <UserWdwVote
-          match={match}
-          home={home}
-          away={away}
-          votes={wdwVotes}
-          onVote={onWdwVote}
-        />
-      )}
       <div className="match-footer">
         <span>{match.venue}</span>
-        <span className="status-pill">{status}</span>
+        <span className={`status-pill ${isLive ? "live" : ""}`}>
+          {isLive ? <><Activity size={14} /> Live</> : formatMatchStatus(status)}
+        </span>
       </div>
-      {legPrediction && <LegPredictionPanel prediction={legPrediction} />}
+      <WinDrawWinPoll
+        homeName={home?.name || match.homeTeam}
+        awayName={away?.name || match.awayTeam}
+        selectedOutcome={selectedOutcome}
+        voteCounts={voteCounts}
+        onVote={handleOutcomeVote}
+        isVoteSaving={isVoteSaving}
+      />
+      {voteError && <p className="live-note">{voteError}</p>}
       {!hasScore && !isPastKickoff && <Countdown target={kickoffTime} now={now} />}
-      {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Add a live-score API or update backend score fields to publish live numbers.</p>}
+      {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Live score polling is running, and this card refreshes regularly while the match is live.</p>}
+      <button className="button secondary compact details-toggle" type="button" onClick={() => setShowDetails((current) => !current)}>
+        {showDetails ? <EyeOff size={16} /> : <Eye size={16} />}
+        {showDetails ? "Hide match details" : "Show match details"}
+      </button>
+      {showDetails && (
+        <MatchDetailPanel
+          detail={matchDetail}
+          isLoading={isDetailLoading}
+          error={detailError}
+          homeName={home?.name || match.homeTeam}
+          awayName={away?.name || match.awayTeam}
+        />
+      )}
       <a className="button secondary compact" href={match.liveUrl} target="_blank" rel="noreferrer">
         <Activity size={16} /> UEFA live centre
       </a>
@@ -528,102 +698,6 @@ function TeamScore({ team, fallbackName, score }) {
       {team && <img className={`crest crest-${team.id}`} src={team.logo} alt={`${team.name} logo`} loading="lazy" />}
       <span>{team?.name || fallbackName}</span>
       <strong>{score ?? "–"}</strong>
-    </div>
-  );
-}
-
-function LegPredictionPanel({ prediction }) {
-  return (
-    <div className="leg-prediction">
-      <div className="leg-prediction-top">
-        <span>Leg prediction</span>
-        <strong>{prediction.winner.name}</strong>
-        <em>{prediction.edge}% edge</em>
-      </div>
-      <div className="leg-meter" aria-label={`${prediction.winner.name} projected edge ${prediction.edge}%`}>
-        <span style={{ width: `${prediction.edge}%` }} />
-      </div>
-      <div className="factor-grid">
-        {prediction.factors.map((factor) => (
-          <div className="factor-chip" key={factor.label}>
-            <span>{factor.label}</span>
-            <strong>{factor.value}</strong>
-            <small>{factor.note}</small>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ModelScoreline({ prediction, home, away }) {
-  return (
-    <div className="model-scoreline">
-      <div>
-        <span>Stats-based score prediction</span>
-        <strong>{prediction.scoreline}</strong>
-        <small>xG: {home.name} {prediction.expected.home.toFixed(1)} - {prediction.expected.away.toFixed(1)} {away.name}</small>
-      </div>
-      <WinDrawWin home={home} away={away} probabilities={prediction.probabilities} />
-    </div>
-  );
-}
-
-function WinDrawWin({ home, away, probabilities, active, onSelect }) {
-  const items = [
-    { key: "home", label: home.name, value: probabilities.home },
-    { key: "draw", label: "Draw", value: probabilities.draw },
-    { key: "away", label: away.name, value: probabilities.away }
-  ];
-
-  return (
-    <div className="wdw-row" aria-label="Win draw win probability">
-      {items.map((item) => (
-        <button
-          className={`wdw-chip ${active === item.key ? "active" : ""} ${onSelect ? "clickable" : ""}`}
-          type="button"
-          onClick={onSelect ? () => onSelect(item.key) : undefined}
-          key={item.key}
-        >
-          <span>{item.label}</span>
-          <strong>{item.value}%</strong>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function UserWdwVote({ match, home, away, votes, onVote }) {
-  const counts = votes || { home: 0, draw: 0, away: 0 };
-  const total = counts.home + counts.draw + counts.away;
-  const percentages = total
-    ? {
-        home: Math.round((counts.home / total) * 100),
-        draw: Math.round((counts.draw / total) * 100),
-        away: 100 - Math.round((counts.home / total) * 100) - Math.round((counts.draw / total) * 100)
-      }
-    : { home: 0, draw: 0, away: 0 };
-
-  return (
-    <div className="score-predictor">
-      <div className="score-predictor-head">
-        <span>Fan Win-Draw-Win</span>
-        <strong>{total} vote{total === 1 ? "" : "s"}</strong>
-      </div>
-      <div className="user-wdw">
-        <span>Click to add a vote</span>
-        <WinDrawWin
-          home={home}
-          away={away}
-          onSelect={(outcome) => onVote(match.id, outcome)}
-          probabilities={percentages}
-        />
-      </div>
-      <div className="vote-count-row">
-        <span>{home.name}: {counts.home}</span>
-        <span>Draw: {counts.draw}</span>
-        <span>{away.name}: {counts.away}</span>
-      </div>
     </div>
   );
 }
@@ -678,50 +752,255 @@ function AnalysisCard({ icon, title, text }) {
   );
 }
 
-function LeadersBoard({ leaders }) {
+function LeadersSection({ leaders }) {
+  if (!leaders) return null;
+
   return (
-    <div className="leaders-grid">
-      <article className="mvp-card">
-        {leaders.mvp.photo && <img className="mvp-photo" src={leaders.mvp.photo} alt={leaders.mvp.name} loading="lazy" />}
-        <span className="leader-kicker">{leaders.mvp.role}</span>
-        <h3>{leaders.mvp.name}</h3>
-        <strong>{leaders.mvp.team}</strong>
-        <p>{leaders.mvp.value}</p>
-        <small>{leaders.mvp.note}</small>
-      </article>
-      <LeaderList title="Top scorers" metric="Goals" rows={leaders.topScorers} />
-      <LeaderList title="Top assists" metric="Assists" rows={leaders.topAssists} />
-      <LeaderList title="Top G/A" metric="G/A" rows={leaders.topGoalAssists} />
+    <section id="leaders" className="section leaders-section">
+      <div className="section-heading">
+        <p className="eyebrow">Leaders</p>
+        <h2>Top performers â€” goals, assists, MVP</h2>
+        <p>Season leaders among the remaining squads: top scorers, assist makers, and an MVP candidate.</p>
+      </div>
+      <div className="leaders-grid">
+        <article className="mvp-card">
+          <span className="leader-kicker">Most valuable player</span>
+          <MvpPhoto photo={leaders.mvp.photo} name={leaders.mvp.name} />
+          <h3>{leaders.mvp.name}</h3>
+          <strong>{leaders.mvp.team}</strong>
+          <p className="muted">{leaders.mvp.role}</p>
+          <p>{leaders.mvp.value}</p>
+          <p className="muted small">{leaders.mvp.note}</p>
+        </article>
+
+        <LeaderList title="Top scorers" label="Goals" items={leaders.topScorers} />
+        <LeaderList title="Top assists" label="Assists" items={leaders.topAssists} />
+        <LeaderList title="Goals + assists" label="Goal involvements" items={leaders.topGoalAssists} />
+      </div>
+    </section>
+  );
+}
+
+function MvpPhoto({ photo, name }) {
+  const [failed, setFailed] = useState(false);
+  const initials = String(name || "Player")
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  return (
+    <div className="mvp-photo">
+      {photo && !failed ? (
+        <img src={photo} alt={name} onError={() => setFailed(true)} />
+      ) : (
+        <span>{initials}</span>
+      )}
     </div>
   );
 }
 
-function LeaderList({ title, metric, rows = [] }) {
+function LeaderList({ title, label, items }) {
+  const maxValue = Math.max(...items.map((item) => Number(item.value) || 0), 1);
+
   return (
     <article className="leader-list">
       <div className="leader-list-head">
         <h3>{title}</h3>
-        <span>{metric}</span>
+        <span>{label}</span>
       </div>
       <div className="leader-rows">
-        {rows.map((row) => (
-          <div className="leader-row" key={`${title}-${row.rank}-${row.name}`}>
-            <span className="leader-rank">{row.rank}</span>
-            <span>
-              <strong>{row.name}</strong>
-              <small>{row.team}</small>
-            </span>
-            <em>{row.value}</em>
-          </div>
+        {items.map((item) => (
+          <LeaderRow
+            key={`${title}-${item.rank}-${item.name}`}
+            rank={item.rank}
+            name={item.name}
+            team={item.team}
+            value={item.value}
+            fill={Math.max((Number(item.value) || 0) / maxValue, 0.12)}
+          />
         ))}
       </div>
     </article>
   );
 }
 
+function LeaderRow({ rank, name, team, value, fill }) {
+  return (
+    <div className="leader-row">
+      <span className="leader-rank">{rank}</span>
+      <span className="leader-player">
+        <strong>{name}</strong>
+        <small>{team}</small>
+      </span>
+      <span className="leader-value-block">
+        <em>{value}</em>
+        <span className="leader-value-meter"><span style={{ width: `${Math.round(fill * 100)}%` }} /></span>
+      </span>
+    </div>
+  );
+}
+
+function WinDrawWinPoll({ homeName, awayName, selectedOutcome, voteCounts, onVote, isVoteSaving }) {
+  const totalVotes = voteCounts.home + voteCounts.draw + voteCounts.away;
+  const options = [
+    { key: "home", label: `${homeName} win`, count: voteCounts.home },
+    { key: "draw", label: "Draw", count: voteCounts.draw },
+    { key: "away", label: `${awayName} win`, count: voteCounts.away }
+  ];
+
+  return (
+    <div className="score-predictor">
+      <div className="score-predictor-head">
+        <span>Win-draw-win</span>
+        <strong>
+          {isVoteSaving
+            ? "Saving vote..."
+            : totalVotes
+              ? `${totalVotes} saved vote${totalVotes === 1 ? "" : "s"}`
+              : "One vote per refresh"}
+        </strong>
+      </div>
+      <div className="wdw-row" aria-label="Match outcome vote">
+        {options.map((option) => (
+          <button
+            key={option.key}
+            className={`wdw-chip ${selectedOutcome ? "" : "clickable"} ${selectedOutcome === option.key ? "active" : ""}`}
+            type="button"
+            onClick={() => onVote(option.key)}
+            disabled={Boolean(selectedOutcome || isVoteSaving)}
+          >
+            <span>{option.label}</span>
+            <strong>{formatVotePercent(option.count, totalVotes)}%</strong>
+          </button>
+        ))}
+      </div>
+      <div className="vote-count-row">
+        <span>Home votes<strong>{voteCounts.home}</strong></span>
+        <span>Draw votes<strong>{voteCounts.draw}</strong></span>
+        <span>Away votes<strong>{voteCounts.away}</strong></span>
+      </div>
+      <div className="user-wdw">
+        <span>Your pick</span>
+        <strong>{selectedOutcome ? options.find((option) => option.key === selectedOutcome)?.label : "Choose one outcome"}</strong>
+      </div>
+    </div>
+  );
+}
+
+function MatchDetailPanel({ detail, isLoading, error, homeName, awayName }) {
+  if (isLoading && !detail) {
+    return <div className="match-detail-panel"><p className="live-note">Loading live match details...</p></div>;
+  }
+
+  if (error && !detail) {
+    return <div className="match-detail-panel"><p className="live-note">{error}</p></div>;
+  }
+
+  if (!detail) return null;
+
+  const scoreHome = detail.score?.home ?? 0;
+  const scoreAway = detail.score?.away ?? 0;
+  const hasAnyEvents =
+    (detail.events?.goals?.length || 0) +
+    (detail.events?.bookings?.length || 0) +
+    (detail.events?.substitutions?.length || 0) > 0;
+  const hasAnyLineups = (detail.lineups?.home?.length || 0) + (detail.lineups?.away?.length || 0) > 0;
+
+  return (
+    <div className="match-detail-panel">
+      <div className="match-detail-top">
+        <div>
+          <span className="detail-kicker">Live match center</span>
+          <h3>{homeName} {scoreHome} - {scoreAway} {awayName}</h3>
+          <p>{detail.summary}</p>
+        </div>
+        <span className="status-pill">{detail.status}</span>
+      </div>
+
+      {detail.stats?.length > 0 && (
+        <div className="match-detail-stats">
+          {detail.stats.map((stat) => (
+            <div className="match-detail-stat" key={stat.label}>
+              <span>{stat.label}</span>
+              <strong>{stat.value}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!hasAnyLineups && !hasAnyEvents && detail.providerStatus === "connected" && (
+        <p className="live-note">Live score is connected. Detailed events and lineups are not available from the current provider feed for this match yet.</p>
+      )}
+
+      <div className="match-detail-grid">
+        <LineupColumn title={`${homeName} lineup`} players={detail.lineups?.home || []} />
+        <LineupColumn title={`${awayName} lineup`} players={detail.lineups?.away || []} />
+      </div>
+
+      <div className="match-detail-grid events">
+        <EventList
+          title="Goals"
+          emptyText="No goals recorded yet."
+          items={detail.events?.goals || []}
+          renderItem={(item) => `${item.minute} ${item.scorer} (${item.team})${item.score ? ` - ${item.score}` : ""}`}
+        />
+        <EventList
+          title="Bookings"
+          emptyText="No cards recorded yet."
+          items={detail.events?.bookings || []}
+          renderItem={(item) => `${item.minute} ${item.player} (${item.team}) - ${item.card}`}
+        />
+        <EventList
+          title="Substitutions"
+          emptyText="No substitutions recorded yet."
+          items={detail.events?.substitutions || []}
+          renderItem={(item) => `${item.minute} ${item.team}: ${item.playerOut} off, ${item.playerIn} on`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function LineupColumn({ title, players }) {
+  return (
+    <div className="lineup-column">
+      <h4>{title}</h4>
+      {!players.length && <p className="muted">Lineup not published yet.</p>}
+      <ol>
+        {players.map((player) => (
+          <li key={`${title}-${player.shirtNumber || "x"}-${player.name}`}>
+            <span className="lineup-shirt">{player.shirtNumber ?? "-"}</span>
+            <span>
+              <strong>{player.name}</strong>
+              <small>{player.position}</small>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function EventList({ title, items, emptyText, renderItem }) {
+  return (
+    <div className="event-list">
+      <h4>{title}</h4>
+      {!items.length && <p className="muted">{emptyText}</p>}
+      <ul>
+        {items.map((item, index) => (
+          <li key={`${title}-${index}-${renderItem(item)}`}>{renderItem(item)}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function TeamCard({ team }) {
   return (
     <article className="team-card detailed">
+      <TeamPhoto team={team} />
       <header>
         <img className={`crest crest-${team.id}`} src={team.logo} alt={`${team.name} logo`} loading="lazy" />
         <div>
@@ -738,7 +1017,7 @@ function TeamCard({ team }) {
         <Stat label="Recoveries" value={team.stats.recoveries} />
       </div>
       {team.manager && <ManagerPanel manager={team.manager} />}
-      {team.recentForm && <RecentForm form={team.recentForm} />}
+      {team.recentForm && <RecentForm form={team.recentForm} leagueLabel={team.recentForm.leagueLabel || getDomesticLeagueLabel(team.id)} />}
       <p>{team.note}</p>
       <div className="watch-list">
         <h4>Players to watch</h4>
@@ -790,11 +1069,11 @@ function ManagerPanel({ manager }) {
   );
 }
 
-function RecentForm({ form }) {
+function RecentForm({ form, leagueLabel }) {
   return (
     <div className="recent-form-grid">
       <FormColumn title="Champions League last 5" items={form.championsLeague} />
-      <FormColumn title="Domestic league last 5" items={form.league} />
+      <FormColumn title={`${leagueLabel} last 5`} items={form.league} />
     </div>
   );
 }
@@ -811,6 +1090,26 @@ function FormColumn({ title, items = [] }) {
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+function TeamPhoto({ team }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed || !team.photo) {
+    return (
+      <div className="team-photo fallback">
+        <img src={team.logo} alt={`${team.name} logo`} loading="lazy" />
+        {team.photoPage && <a href={team.photoPage} target="_blank" rel="noreferrer">Open club photos</a>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="team-photo">
+      <img src={team.photo} alt={`${team.name} squad`} loading="lazy" onError={() => setFailed(true)} />
+      {team.photoPage && <a href={team.photoPage} target="_blank" rel="noreferrer">Official photo source</a>}
     </div>
   );
 }
@@ -832,8 +1131,8 @@ function VoteTally({ tally, total }) {
   return (
     <article className="vote-card">
       <div className="vote-card-head">
-        <h3>Live fan vote tally</h3>
-        <span>{total} local vote{total === 1 ? "" : "s"}</span>
+        <h3>Champion pick tally</h3>
+        <span>{total} saved champion vote{total === 1 ? "" : "s"}</span>
       </div>
       {tally.map(({ team, count }) => {
         const percent = Math.round((count / denominator) * 100);
@@ -866,11 +1165,12 @@ function PredictionFeed({ predictions, teams, now }) {
       <div className="prediction-feed">
         {predictions.slice(0, 8).map((prediction) => {
           const team = teamLookup[prediction.champion];
+          const displayName = String(prediction.name || "Fan");
           return (
-            <div className="prediction-entry" key={prediction.id}>
-              <span className="feed-avatar">{prediction.name.slice(0, 2).toUpperCase()}</span>
+            <div className="prediction-entry" key={prediction.id || `${prediction.timestamp || "recent"}-${displayName}-${prediction.champion || "pick"}`}>
+              <span className="feed-avatar">{displayName.slice(0, 2).toUpperCase()}</span>
               <div>
-                <strong>{prediction.name}</strong>
+                <strong>{displayName}</strong>
                 <span>
                   {team && <img className={`feed-logo feed-logo-${team.id}`} src={team.logo} alt="" />}
                   {prediction.champion} • {prediction.confidence}% confident
@@ -907,127 +1207,6 @@ function getCountdownParts(target, now) {
   };
 }
 
-function buildLegPrediction(home, away) {
-  const homeRating = buildTeamLegScore(home, true);
-  const awayRating = buildTeamLegScore(away, false);
-  const expected = buildExpectedGoals(home, away, homeRating, awayRating);
-  const probabilities = buildWinDrawWin(expected.home, expected.away);
-  const winner = probabilities.home >= probabilities.away ? home : away;
-  const loser = winner.id === home.id ? away : home;
-  const edge = Math.max(probabilities.home, probabilities.away);
-
-  return {
-    winner,
-    edge,
-    expected,
-    probabilities,
-    scoreline: buildModelScoreline(home, away, expected),
-    factors: buildLegFactors(winner, loser, winner.id === home.id)
-  };
-}
-
-function buildExpectedGoals(home, away, homeRating, awayRating) {
-  const homeAttack = Number(home.stats.goals || 0) / Math.max(Number(away.stats.conceded || 1), 1);
-  const awayAttack = Number(away.stats.goals || 0) / Math.max(Number(home.stats.conceded || 1), 1);
-  const homeControl = (parsePercent(home.stats.possession) + parsePercent(home.stats.passing)) / 190;
-  const awayControl = (parsePercent(away.stats.possession) + parsePercent(away.stats.passing)) / 190;
-  const ratingGap = (homeRating - awayRating) / 45;
-
-  return {
-    home: clampNumber(1.05 + homeAttack * 0.26 + homeControl * 0.34 + ratingGap * 0.22, 0.4, 3.6),
-    away: clampNumber(0.9 + awayAttack * 0.25 + awayControl * 0.3 - ratingGap * 0.12, 0.3, 3.4)
-  };
-}
-
-function buildWinDrawWin(homeXg, awayXg) {
-  const diff = homeXg - awayXg;
-  const draw = clamp(Math.round(27 - Math.abs(diff) * 7), 16, 31);
-  const remaining = 100 - draw;
-  const homeShare = 1 / (1 + Math.exp(-diff * 1.45));
-  const home = clamp(Math.round(remaining * homeShare), 10, remaining - 10);
-  const away = 100 - draw - home;
-
-  return { home, draw, away };
-}
-
-function buildModelScoreline(home, away, expected) {
-  const homeGoals = clamp(Math.round(expected.home), 0, 5);
-  const awayGoals = clamp(Math.round(expected.away), 0, 5);
-
-  if (homeGoals === awayGoals && Math.abs(expected.home - expected.away) > 0.28) {
-    return expected.home > expected.away
-      ? `${home.name} ${homeGoals + 1}-${awayGoals} ${away.name}`
-      : `${home.name} ${homeGoals}-${awayGoals + 1} ${away.name}`;
-  }
-
-  return `${home.name} ${homeGoals}-${awayGoals} ${away.name}`;
-}
-
-function buildTeamLegScore(team, isHome) {
-  return (
-    team.probability * 1.4 +
-    Number(team.stats.goals || 0) * 0.75 -
-    Number(team.stats.conceded || 0) * 0.42 +
-    Number(team.stats.cleanSheets || 0) * 1.2 +
-    Number(team.stats.recoveries || 0) * 0.018 +
-    parsePercent(team.stats.possession) * 0.18 +
-    parsePercent(team.stats.passing) * 0.12 +
-    (isHome ? 4 : 0)
-  );
-}
-
-function buildLegFactors(winner, loser, isHomeWinner) {
-  const goalGap = Number(winner.stats.goals || 0) - Number(loser.stats.goals || 0);
-  const concededGap = Number(loser.stats.conceded || 0) - Number(winner.stats.conceded || 0);
-  const possessionGap = parsePercent(winner.stats.possession) - parsePercent(loser.stats.possession);
-  const recoveryGap = Number(winner.stats.recoveries || 0) - Number(loser.stats.recoveries || 0);
-
-  return [
-    {
-      label: "Venue",
-      value: isHomeWinner ? "Home edge" : "Away edge",
-      note: isHomeWinner ? `${winner.name} get crowd and travel advantage.` : `${winner.name} rate higher even away from home.`
-    },
-    {
-      label: "Attack",
-      value: `${winner.stats.goals} goals`,
-      note: goalGap >= 0 ? `${Math.abs(goalGap)} more than ${loser.name}.` : `Lower total, but stronger matchup balance.`
-    },
-    {
-      label: "Defence",
-      value: `${winner.stats.conceded} conceded`,
-      note: concededGap >= 0 ? `${concededGap} fewer conceded than ${loser.name}.` : `Risk factor: ${loser.name} concede less.`
-    },
-    {
-      label: "Control",
-      value: winner.stats.possession,
-      note: possessionGap >= 0 ? `${possessionGap.toFixed(1)}% possession edge.` : `${loser.name} may control more of the ball.`
-    },
-    {
-      label: "Pressure",
-      value: `${winner.stats.recoveries} recoveries`,
-      note: recoveryGap >= 0 ? `${recoveryGap} recovery advantage.` : `${loser.name} recover more balls.`
-    },
-    {
-      label: "Model",
-      value: `${winner.probability}% title rate`,
-      note: `Higher overall tournament projection than ${loser.name}.`
-    }
-  ];
-}
-
-function parsePercent(value) {
-  return Number(String(value || "0").replace("%", "")) || 0;
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function clampNumber(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
 function formatKickoff(value) {
   return new Intl.DateTimeFormat(undefined, {
     weekday: "short",
@@ -1039,7 +1218,9 @@ function formatKickoff(value) {
 }
 
 function formatRelativeTime(timestamp, now) {
-  const seconds = Math.floor((now - timestamp) / 1000);
+  const timeValue = typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
+  if (!timeValue || Number.isNaN(timeValue)) return "Recently";
+  const seconds = Math.floor((now - timeValue) / 1000);
   if (seconds < 60) return "Just now";
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
@@ -1078,12 +1259,54 @@ function readLocalPredictions() {
   }
 }
 
-function readWdwVotes() {
-  try {
-    return JSON.parse(localStorage.getItem(LOCAL_WDW_VOTES_KEY) || "{}");
-  } catch {
-    return {};
+function mergePredictionBoard(response, entry, currentBoard) {
+  const hasResponseBoard =
+    typeof response?.count === "number" ||
+    (response?.tally && Object.keys(response.tally).length > 0) ||
+    (response?.recent && response.recent.length > 0);
+
+  if (hasResponseBoard) {
+    return {
+      count: response.count || 0,
+      tally: response.tally || {},
+      recent: response.recent || []
+    };
   }
+
+  const nextCount = (currentBoard?.count || 0) + 1;
+  const nextTally = {
+    ...(currentBoard?.tally || {}),
+    [entry.champion]: ((currentBoard?.tally || {})[entry.champion] || 0) + 1
+  };
+  const nextRecent = [entry, ...(currentBoard?.recent || [])].slice(0, 8);
+
+  return {
+    count: nextCount,
+    tally: nextTally,
+    recent: nextRecent
+  };
+}
+
+function formatVotePercent(count, total) {
+  if (!total) return 0;
+  return Math.round((count / total) * 100);
+}
+
+function isLiveStatus(status) {
+  return ["in_play", "live", "paused"].includes(String(status || "").toLowerCase());
+}
+
+function formatMatchStatus(status) {
+  const value = String(status || "unknown").replaceAll("_", " ");
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function getDomesticLeagueLabel(teamId) {
+  if (teamId === "bayern") return "Bundesliga";
+  if (teamId === "arsenal") return "Premier League";
+  if (teamId === "atleti") return "LaLiga";
+  if (teamId === "psg") return "Ligue 1";
+  return "League";
 }
 
 export default App;

@@ -1,0 +1,20 @@
+# Node and React
+node_modules/
+dist/
+.env.local
+.env.development.local
+
+# Local scratch/recovery files
+temp_*.js
+tmp_*.jsx
+recover_*.jsx
+recover_*.css
+temp_*.html
+
+# Logs
+*.log
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.vscode/
