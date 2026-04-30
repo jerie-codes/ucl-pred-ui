@@ -150,6 +150,10 @@ function App() {
   const runnerUpOptions = useMemo(() => getFinalOpponentOptions(form.champion, teams), [form.champion, teams]);
   const finalCountdown = getCountdownParts(new Date(FINAL_KICKOFF).getTime(), now);
   const fanVoteCount = sharedPredictions.count || data.predictionCount || localPredictions.length;
+  const hasLiveScoreError = data.liveScoreStatus?.startsWith("unavailable") || data.liveScoreStatus === "not_configured";
+  const hasSheetStorageError = data.sheetsStatus?.startsWith("sheet_unavailable");
+  const shouldShowVoteLoadError = voteLoadError && !hasSheetStorageError;
+  const shouldShowPredictionLoadError = predictionLoadError && !hasSheetStorageError;
 
   const voteTally = useMemo(() => {
     const counts = Object.fromEntries(teams.map((team) => [team.name, sharedPredictions.tally[team.name] || 0]));
@@ -351,14 +355,14 @@ function App() {
           <InfoTile label="Fan votes   " value={fanVoteCount} />
         </section>
 
-        {(loadError || data.liveScoreStatus?.startsWith("unavailable") || data.liveScoreStatus === "not_configured" || data.sheetsStatus?.startsWith("sheet_unavailable") || voteLoadError || predictionLoadError) && (
+        {(loadError || hasLiveScoreError || hasSheetStorageError || shouldShowVoteLoadError || shouldShowPredictionLoadError) && (
           <div className="notice-stack">
             {loadError && <p className="notice">Backend data could not load: {loadError}</p>}
             {data.liveScoreStatus === "not_configured" && <p className="notice">Live scores are not configured yet. Add `FOOTBALL_DATA_API_TOKEN` to the backend environment.</p>}
             {data.liveScoreStatus?.startsWith("unavailable") && <p className="notice">Live scores are unavailable: {data.liveScoreStatus}</p>}
             {data.sheetsStatus?.startsWith("sheet_unavailable") && <p className="notice">Shared vote storage is unavailable: {data.sheetsStatus}</p>}
-            {voteLoadError && <p className="notice">Match votes are unavailable: {voteLoadError}</p>}
-            {predictionLoadError && <p className="notice">Prediction board is unavailable: {predictionLoadError}</p>}
+            {shouldShowVoteLoadError && <p className="notice">Match votes are unavailable: {voteLoadError}</p>}
+            {shouldShowPredictionLoadError && <p className="notice">Prediction board is unavailable: {predictionLoadError}</p>}
           </div>
         )}
 
