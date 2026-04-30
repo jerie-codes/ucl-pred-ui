@@ -5,15 +5,13 @@ import {
   Clock3,
   Crown,
   Database,
-  Eye,
-  EyeOff,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   Trophy
 } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
-import { fetchForecast, fetchMatchDetail, fetchMatchVotes, fetchPredictions, submitMatchVote, submitPrediction } from "./api";
+import { fetchForecast, fetchMatchVotes, fetchPredictions, submitMatchVote, submitPrediction } from "./api";
 
 const FINAL_KICKOFF = "2026-05-30T18:00:00+02:00";
 const LOCAL_PREDICTIONS_KEY = "ucl-predictor-local-predictions-v2";
@@ -576,48 +574,11 @@ function MatchCard({ match, teamById, now, voteCounts, onVote }) {
   const status = hasScore ? match.status : isPastKickoff ? "awaiting live update" : "upcoming";
   const isLive = isLiveStatus(match.status);
   const [selectedOutcome, setSelectedOutcome] = useState("");
-  const [showDetails, setShowDetails] = useState(false);
-  const [matchDetail, setMatchDetail] = useState(null);
-  const [detailError, setDetailError] = useState("");
-  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [isVoteSaving, setIsVoteSaving] = useState(false);
   const [voteError, setVoteError] = useState("");
 
-  useEffect(() => {
-    if (!showDetails) return undefined;
-
-    let isActive = true;
-
-    async function loadDetail() {
-      try {
-        setIsDetailLoading(true);
-        const detail = await fetchMatchDetail(match.id);
-        if (!isActive) return;
-        setMatchDetail(detail);
-        setDetailError("");
-      } catch (error) {
-        if (isActive) {
-          setDetailError(error.message);
-        }
-      } finally {
-        if (isActive) {
-          setIsDetailLoading(false);
-        }
-      }
-    }
-
-    loadDetail();
-    const poller = window.setInterval(loadDetail, isLiveStatus(matchDetail?.status || match.status) ? 10000 : 30000);
-
-    return () => {
-      isActive = false;
-      window.clearInterval(poller);
-    };
-  }, [showDetails, match.id, match.status]);
-
   async function handleOutcomeVote(outcome) {
     if (selectedOutcome || isVoteSaving) return;
-
     setIsVoteSaving(true);
     setVoteError("");
     try {
@@ -642,6 +603,7 @@ function MatchCard({ match, teamById, now, voteCounts, onVote }) {
         <span className="score-divider">vs</span>
         <TeamScore team={away} fallbackName={match.awayTeam} score={match.awayScore} />
       </div>
+      <MatchPredictionRow match={match} />
       <div className="match-footer">
         <span>{match.venue}</span>
         <span className={`status-pill ${isLive ? "live" : ""}`}>
@@ -658,24 +620,91 @@ function MatchCard({ match, teamById, now, voteCounts, onVote }) {
       />
       {voteError && <p className="live-note">{voteError}</p>}
       {!hasScore && !isPastKickoff && <Countdown target={kickoffTime} now={now} />}
-      {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Live score polling is running, and this card refreshes regularly while the match is live.</p>}
-      <button className="button secondary compact details-toggle" type="button" onClick={() => setShowDetails((current) => !current)}>
-        {showDetails ? <EyeOff size={16} /> : <Eye size={16} />}
-        {showDetails ? "Hide match details" : "Show match details"}
-      </button>
-      {showDetails && (
-        <MatchDetailPanel
-          detail={matchDetail}
-          isLoading={isDetailLoading}
-          error={detailError}
-          homeName={home?.name || match.homeTeam}
-          awayName={away?.name || match.awayTeam}
-        />
-      )}
+      {!hasScore && isPastKickoff && <p className="live-note">Kickoff window reached. Live score polling is running.</p>}
+      <MatchMvpRow home={home} away={away} />
       <a className="button secondary compact" href={match.liveUrl} target="_blank" rel="noreferrer">
         <Activity size={16} /> UEFA live centre
       </a>
     </article>
+  );
+}
+
+function MatchPredictionRow({ match }) {
+  const hasPrediction = match.predictedHomeScore != null && match.predictedAwayScore != null;
+  const hasActual = match.homeScore != null && match.awayScore != null;
+  if (!hasPrediction) return null;
+
+  const exactMatch =
+    hasActual &&
+    match.homeScore === match.predictedHomeScore &&
+    match.awayScore === match.predictedAwayScore;
+
+  return (
+    <div className="match-prediction">
+      <div className="match-prediction-item">
+        <span className="match-prediction-label">Model prediction</span>
+        <strong className="match-prediction-score">
+          {match.predictedHomeScore} – {match.predictedAwayScore}
+        </strong>
+      </div>
+      {hasActual && (
+        <div className={`match-prediction-item${exactMatch ? " exact" : ""}`}>
+          <span className="match-prediction-label">Actual result</span>
+          <strong className="match-prediction-score">
+            {match.homeScore} – {match.awayScore}{exactMatch ? " ✓" : ""}
+          </strong>
+        </div>
+      )}
+      {!hasActual && (
+        <div className="match-prediction-item muted-item">
+          <span className="match-prediction-label">Actual result</span>
+          <strong className="match-prediction-score pending">–</strong>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MatchMvpRow({ home, away }) {
+  const homePlayer = home?.playersToWatch?.[0];
+  const awayPlayer = away?.playersToWatch?.[0];
+  if (!homePlayer && !awayPlayer) return null;
+
+  return (
+    <div className="match-mvp">
+      <p className="match-mvp-label">Players to watch</p>
+      <div className="match-mvp-row">
+        {homePlayer && <MatchMvpSlot player={homePlayer} align="left" />}
+        <span className="match-mvp-sep">vs</span>
+        {awayPlayer && <MatchMvpSlot player={awayPlayer} align="right" />}
+      </div>
+    </div>
+  );
+}
+
+function MatchMvpSlot({ player, align }) {
+  const [failed, setFailed] = useState(false);
+  const initials = player.name
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  return (
+    <div className={`match-mvp-slot ${align}`}>
+      <div className="match-mvp-photo">
+        {player.photo && !failed ? (
+          <img src={player.photo} alt={player.name} loading="lazy" onError={() => setFailed(true)} />
+        ) : (
+          <span>{initials}</span>
+        )}
+      </div>
+      <div className="match-mvp-info">
+        <strong>{player.name}</strong>
+        <small>{player.role}</small>
+      </div>
+    </div>
   );
 }
 
@@ -889,114 +918,6 @@ function WinDrawWinPoll({ homeName, awayName, selectedOutcome, voteCounts, onVot
         <span>Your pick</span>
         <strong>{selectedOutcome ? options.find((option) => option.key === selectedOutcome)?.label : "Choose one outcome"}</strong>
       </div>
-    </div>
-  );
-}
-
-function MatchDetailPanel({ detail, isLoading, error, homeName, awayName }) {
-  if (isLoading && !detail) {
-    return <div className="match-detail-panel"><p className="live-note">Loading live match details...</p></div>;
-  }
-
-  if (error && !detail) {
-    return <div className="match-detail-panel"><p className="live-note">{error}</p></div>;
-  }
-
-  if (!detail) return null;
-
-  const scoreHome = detail.score?.home ?? 0;
-  const scoreAway = detail.score?.away ?? 0;
-  const hasAnyEvents =
-    (detail.events?.goals?.length || 0) +
-    (detail.events?.bookings?.length || 0) +
-    (detail.events?.substitutions?.length || 0) > 0;
-  const hasAnyLineups = (detail.lineups?.home?.length || 0) + (detail.lineups?.away?.length || 0) > 0;
-
-  return (
-    <div className="match-detail-panel">
-      <div className="match-detail-top">
-        <div>
-          <span className="detail-kicker">Live match center</span>
-          <h3>{homeName} {scoreHome} - {scoreAway} {awayName}</h3>
-          <p>{detail.summary}</p>
-        </div>
-        <span className="status-pill">{detail.status}</span>
-      </div>
-
-      {detail.stats?.length > 0 && (
-        <div className="match-detail-stats">
-          {detail.stats.map((stat) => (
-            <div className="match-detail-stat" key={stat.label}>
-              <span>{stat.label}</span>
-              <strong>{stat.value}</strong>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {!hasAnyLineups && !hasAnyEvents && detail.providerStatus === "connected" && (
-        <p className="live-note">Live score is connected. Detailed events and lineups are not available from the current provider feed for this match yet.</p>
-      )}
-
-      <div className="match-detail-grid">
-        <LineupColumn title={`${homeName} lineup`} players={detail.lineups?.home || []} />
-        <LineupColumn title={`${awayName} lineup`} players={detail.lineups?.away || []} />
-      </div>
-
-      <div className="match-detail-grid events">
-        <EventList
-          title="Goals"
-          emptyText="No goals recorded yet."
-          items={detail.events?.goals || []}
-          renderItem={(item) => `${item.minute} ${item.scorer} (${item.team})${item.score ? ` - ${item.score}` : ""}`}
-        />
-        <EventList
-          title="Bookings"
-          emptyText="No cards recorded yet."
-          items={detail.events?.bookings || []}
-          renderItem={(item) => `${item.minute} ${item.player} (${item.team}) - ${item.card}`}
-        />
-        <EventList
-          title="Substitutions"
-          emptyText="No substitutions recorded yet."
-          items={detail.events?.substitutions || []}
-          renderItem={(item) => `${item.minute} ${item.team}: ${item.playerOut} off, ${item.playerIn} on`}
-        />
-      </div>
-    </div>
-  );
-}
-
-function LineupColumn({ title, players }) {
-  return (
-    <div className="lineup-column">
-      <h4>{title}</h4>
-      {!players.length && <p className="muted">Lineup not published yet.</p>}
-      <ol>
-        {players.map((player) => (
-          <li key={`${title}-${player.shirtNumber || "x"}-${player.name}`}>
-            <span className="lineup-shirt">{player.shirtNumber ?? "-"}</span>
-            <span>
-              <strong>{player.name}</strong>
-              <small>{player.position}</small>
-            </span>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-function EventList({ title, items, emptyText, renderItem }) {
-  return (
-    <div className="event-list">
-      <h4>{title}</h4>
-      {!items.length && <p className="muted">{emptyText}</p>}
-      <ul>
-        {items.map((item, index) => (
-          <li key={`${title}-${index}-${renderItem(item)}`}>{renderItem(item)}</li>
-        ))}
-      </ul>
     </div>
   );
 }
