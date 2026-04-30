@@ -613,7 +613,7 @@ function MatchCard({ match, teamById, now, voteCounts, onVote }) {
       isActive = false;
       window.clearInterval(poller);
     };
-  }, [showDetails, match.id]);
+  }, [showDetails, match.id, match.status]);
 
   async function handleOutcomeVote(outcome) {
     if (selectedOutcome || isVoteSaving) return;
@@ -763,7 +763,7 @@ function LeadersSection({ leaders }) {
     <section id="leaders" className="section leaders-section">
       <div className="section-heading">
         <p className="eyebrow">Leaders</p>
-        <h2>Top performers â€” goals, assists, MVP</h2>
+        <h2>Top performers – goals, assists, MVP</h2>
         <p>Season leaders among the remaining squads: top scorers, assist makers, and an MVP candidate.</p>
       </div>
       <div className="leaders-grid">
