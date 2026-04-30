@@ -886,6 +886,142 @@ h2 {
   50% { opacity: 1; transform: scale(1.12); }
 }
 
+/* ── Match prediction row ─────────────────────────────────────── */
+
+.match-prediction {
+  display: flex;
+  gap: 1px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  margin: 2px 0;
+}
+
+.match-prediction-item {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+}
+
+.match-prediction-item + .match-prediction-item {
+  border-left: 1px solid var(--line);
+}
+
+.match-prediction-item.exact .match-prediction-score {
+  color: #4ade80;
+}
+
+.match-prediction-label {
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.match-prediction-score {
+  font-family: var(--display-font);
+  font-size: 1.35rem;
+  font-weight: 400;
+  color: var(--gold);
+  line-height: 1.1;
+}
+
+.match-prediction-score.pending {
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+/* ── Match MVP row ────────────────────────────────────────────── */
+
+.match-mvp {
+  padding: 12px 0 4px;
+}
+
+.match-mvp-label {
+  margin: 0 0 8px;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.match-mvp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.match-mvp-slot {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.match-mvp-slot.right {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+
+.match-mvp-photo {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(3, 10, 36, 0.72);
+  border: 1px solid rgba(245, 196, 81, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 0.75rem;
+  color: var(--gold);
+}
+
+.match-mvp-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.match-mvp-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.match-mvp-info strong {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-mvp-info small {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-mvp-sep {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gold);
+}
+
 .leg-prediction {
   display: grid;
   gap: 12px;
